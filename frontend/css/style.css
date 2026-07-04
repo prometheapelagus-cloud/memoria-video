@@ -1,0 +1,66 @@
+/* ============================================================
+   Memórias em Vídeo — Design System Impeccable
+   ============================================================
+   Regras: OKLCH colors, body line-length 65-75ch,
+   text-wrap balance, z-index semântico, bans respeitados.
+   ============================================================ */
+
+/* ----- Design Tokens (OKLCH) ----- */
+:root {
+  --color-primary: oklch(45% 0.15 265);
+  --color-primary-hover: oklch(40% 0.16 265);
+  --color-primary-light: oklch(92% 0.04 265);
+  --color-primary-dark: oklch(30% 0.12 265);
+  --color-success: oklch(50% 0.18 145);
+  --color-success-light: oklch(92% 0.06 145);
+  --color-warning: oklch(60% 0.16 85);
+  --color-warning-light: oklch(93% 0.06 85);
+  --color-danger: oklch(50% 0.2 30);
+  --color-danger-light: oklch(92% 0.08 30);
+  --color-info: oklch(55% 0.12 240);
+  --color-info-light: oklch(93% 0.04 240);
+  --color-bg: oklch(98% 0 0);
+  --color-surface: oklch(100% 0 0);
+  --color-border: oklch(88% 0 0);
+  --color-border-light: oklch(94% 0 0);
+  --color-ink: oklch(15% 0 0);
+  --color-ink-secondary: oklch(40% 0 0);
+  --color-ink-muted: oklch(50% 0 0);
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.06);
+  --shadow: 0 1px 3px oklch(0% 0 0 / 0.08), 0 1px 2px oklch(0% 0 0 / 0.04);
+  --shadow-md: 0 4px 8px oklch(0% 0 0 / 0.08), 0 2px 4px oklch(0% 0 0 / 0.04);
+  --shadow-lg: 0 8px 14px oklch(0% 0 0 / 0.1), 0 3px 6px oklch(0% 0 0 / 0.06);
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+  --font-size-3xl: clamp(1.75rem, 3vw, 2.25rem);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --sidebar-width: 260px;
+  --header-height: 64px;
+  --max-width: 1200px;
+  --z-dropdown: 10;
+  --z-sticky: 100;
+  --z-sidebar: 100;
+  --z-overlay: 150;
+  --z-modal-backdrop: 200;
+  --z-modal: 300;
+  --z-toast: 400;
+  --z-tooltip: 500;
+}
