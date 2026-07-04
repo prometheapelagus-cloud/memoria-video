@@ -1,7 +1,7 @@
-# Stack Memória em Vídeo
+# Stack Memória em Vídeo — Docker Swarm
 
-Stack completa do **Memória em Vídeo** — plataforma de curadoria de fotos e
-geração de vídeos para eventos. Rodando em Docker Swarm no servidor `pelagus-core`.
+Stack completa da plataforma de curadoria de fotos e geração de vídeos para eventos.
+Rodando em Docker Swarm no servidor `pelagus-core`.
 
 ## Acesso
 
@@ -11,17 +11,24 @@ geração de vídeos para eventos. Rodando em Docker Swarm no servidor `pelagus-
 | API | https://memoria.pelagus.com.br |
 | Health | https://memoria.pelagus.com.br/health |
 
-## Stack completa
+## Stack YAML
 
 ```yaml
-version: "3.9"
-name: memoria-video
+version: "3.7"
+
 
 services:
+  # ====================================================================
+  #   MONGODB — Cache / armazenamento de fotos
+  # ====================================================================
   mongodb:
     image: mongo:7
-    networks: [memoria-internal]
-    volumes: [mongodb-data:/data/db]
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    restart: always
+    networks:
+      - memoria-internal
+    volumes:
+      - mongodb-data:/data/db
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh --quiet
       interval: 30s
@@ -30,14 +37,25 @@ services:
     deploy:
       mode: replicated
       replicas: 1
-      placement: [constraints: [node.role == manager]]
+      placement:
+        constraints:
+          - node.role == manager
       resources:
-        limits: {memory: 2G}
-        reservations: {memory: 512M}
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
 
+
+  # ====================================================================
+  #   REDIS — Filas e cache
+  # ====================================================================
   redis:
     image: redis:7-alpine
-    networks: [memoria-internal]
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    restart: always
+    networks:
+      - memoria-internal
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
@@ -47,18 +65,29 @@ services:
       mode: replicated
       replicas: 1
       resources:
-        limits: {memory: 256M}
-        reservations: {memory: 64M}
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
 
+
+  # ====================================================================
+  #   POSTGRES — Banco principal
+  # ====================================================================
   postgres:
     image: postgres:16-alpine
-    networks: [memoria-internal]
-    volumes: [postgresql-data:/var/lib/postgresql/data]
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    restart: always
     environment:
       POSTGRES_DB: memoria_video
       POSTGRES_USER: memoria
       POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
-    secrets: [pg_password]
+    networks:
+      - memoria-internal
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+    secrets:
+      - pg_password
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U memoria -d memoria_video"]
       interval: 30s
@@ -67,18 +96,35 @@ services:
     deploy:
       mode: replicated
       replicas: 1
-      placement: [constraints: [node.role == manager]]
+      placement:
+        constraints:
+          - node.role == manager
 
+
+  # ====================================================================
+  #   BACKEND — FastAPI (API principal)
+  # ====================================================================
   backend:
     image: pelagus/memoria-video:latest
-    networks: [memoria-internal, traefik-public]
-    depends_on: [mongodb, redis, postgres]
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    restart: always
     environment:
-      DATABASE_URL: postgresql+asyncpg://memoria:\$\${POSTGRES_PASSWORD}@postgres:5432/memoria_video
+      # Database
+      DATABASE_URL: postgresql+asyncpg://memoria:$${POSTGRES_PASSWORD}@postgres:5432/memoria_video
       MONGODB_URL: mongodb://mongodb:27017/memoria_video
       REDIS_URL: redis://redis:6379/0
+
+      # General
       DEBUG: "false"
-    secrets: [pg_password]
+    networks:
+      - memoria-internal
+      - traefik-public
+    depends_on:
+      - mongodb
+      - redis
+      - postgres
+    secrets:
+      - pg_password
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -100,15 +146,25 @@ services:
         - traefik.http.routers.memoria.tls.certresolver=letsencrypt
         - traefik.http.services.memoria.loadbalancer.server.port=8000
       resources:
-        limits: {memory: 1G}
-        reservations: {memory: 256M}
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
 
+
+  # ====================================================================
+  #   FRONTEND — Nginx (SPA estático)
+  # ====================================================================
   frontend:
     image: nginx:alpine
-    networks: [memoria-internal, traefik-public]
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    restart: always
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - memoria-internal
+      - traefik-public
     healthcheck:
       test: ["CMD", "nginx", "-t"]
       interval: 30s
@@ -125,14 +181,17 @@ services:
         - traefik.http.routers.memoria-front.tls.certresolver=letsencrypt
         - traefik.http.services.memoria-front.loadbalancer.server.port=80
 
+
 secrets:
   pg_password:
     external: true
     name: memoria_pg_password
 
+
 volumes:
   mongodb-data:
   postgresql-data:
+
 
 networks:
   traefik-public:
@@ -153,7 +212,7 @@ networks:
 | `backend` | `pelagus/memoria-video:latest` | 2 | API FastAPI (porta 8000) |
 | `frontend` | `nginx:alpine` | 2 | SPA estático (porta 80) |
 
-## Rede
+## Redes
 
 | Rede | Driver | Tipo |
 |------|--------|------|
@@ -189,12 +248,3 @@ Tag:  pelagus/memoria-video:latest
 docker secret create memoria_pg_password -
 docker stack deploy -c stack-memoria.yml memoria-video
 ```
-
-## Variáveis de ambiente
-
-| Variável | Descrição |
-|----------|-----------|
-| `DATABASE_URL` | PostgreSQL com asyncpg |
-| `MONGODB_URL` | Conexão MongoDB |
-| `REDIS_URL` | Conexão Redis |
-| `DEBUG` | Modo debug |
