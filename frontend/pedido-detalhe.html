@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Memórias em Vídeo — Detalhe do Pedido</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script src="js/api.js"></script>
+  <script src="js/sse.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    let pedidoDetalheId = null, pedidoDetalheStream = null, pedidoDetalheData = null;
+    function getPedidoDetalheHTML() {
+      return `<div id="pedido-detail-loading" class="loading-overlay"><div class="spinner"></div><span>Carregando pedido…</span></div><div id="pedido-detail-content" class="hidden">
+        <nav style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-6);flex-wrap:wrap;">
+          <a href="#/pedidos" class="btn btn-sm btn-secondary">← Voltar</a>
+          <span id="detail-status" class="badge badge--info">Carregando…</span>
+          <span id="detail-id" style="font-size:var(--font-size-xs);color:var(--color-ink-muted);font-family:var(--font-mono);"></span>
+        </nav>
+        <div id="sse-status-bar" class="hidden alert alert--info" style="margin-bottom:var(--space-4);font-size:var(--font-size-xs);">🔄 Status atualizado em tempo real</div>
+        <div class="detail-grid">
+          <div>
+            <div class="detail-section"><div class="detail-section__title">📸 Fotos Enviadas</div><div id="fotos-section"><div id="fotos-gallery" class="photo-gallery"></div><div id="fotos-empty" class="hidden"><div class="empty-state"><div class="empty-state__icon">🖼️</div><div class="empty-state__text">Nenhuma foto enviada</div></div></div></div></div>
+            <div class="detail-section"><div class="detail-section__title">🎯 Curadoria</div><div class="curation-tabs"><button class="curation-tab curation-tab--active" data-curation="all" onclick="filterCuration('all')">Todas</button><button class="curation-tab" data-curation="selected" onclick="filterCuration('selected')">Selecionadas</button><button class="curation-tab" data-curation="rejected" onclick="filterCuration('rejected')">Rejeitadas</button></div><div id="curation-gallery" class="photo-gallery"></div></div>
+          </div>
+          <div>
+            <div class="detail-section"><div class="detail-section__title">👤 Cliente</div><div id="cliente-info"></div></div>
+            <div class="detail-section"><div class="detail-section__title">🎉 Evento</div><div id="evento-info"></div></div>
+            <div class="detail-section"><div class="detail-section__title">🎬 Vídeo</div><div id="video-section"><div id="video-empty" class="empty-state"><div class="empty-state__icon">🎥</div><div class="empty-state__text">Vídeo ainda não gerado</div><p>Após a curadoria e processamento, o vídeo aparecerá aqui.</p></div><div id="video-player-wrapper" class="hidden"><div class="video-player"><video id="video-player" controls preload="metadata"></video></div></div></div></div>
+            <div class="action-bar"><button class="btn btn-primary" onclick="reprocessarPedido()" id="btn-reprocessar">🔄 Reprocessar</button><button class="btn btn-danger" onclick="cancelarPedido()" id="btn-cancelar">🚫 Cancelar</button></div>
+          </div>
+        </div>
+      </div>`;
+    }
+    async function loadPedidoDetalhe(id) {
+      pedidoDetalheId = id;
+      setPageMeta('Detalhe do Pedido', `#${id.slice(0,8)}…`);
+      document.getElementById('pedido-detail-loading').classList.remove('hidden');
+      if (document.getElementById('pedido-detail-content')) document.getElementById('pedido-detail-content').classList.add('hidden');
+      try {
+        const data = await api.get(`/pedidos/${id}`);
+        pedidoDetalheData = data;
+        renderPedidoDetalhe(data);
+        connectStream(id);
+      } catch (err) { document.getElementById('pedido-detail-loading').innerHTML = '<div class="alert alert--error">'+esc(err.message)+'</div>'; }
+    }
+    function renderPedidoDetalhe(data) {
+      document.getElementById('pedido-detail-loading').classList.add('hidden');
+      document.getElementById('pedido-detail-content').classList.remove('hidden');
+      const sb = document.getElementById('detail-status');
+      sb.className = 'badge badge--'+statusBadgeClass(data.status);
+      sb.textContent = statusLabelMap(data.status);
+      document.getElementById('detail-id').textContent = 'ID: '+data.id;
+      renderClienteInfo(data); renderEventoInfo(data); renderFotos(data.fotos||[]); renderCuration(data.fotos||[]); renderVideo(data);
+      setPageMeta('Detalhe do Pedido', esc(data.cliente_nome||data.nome||'')+' · '+esc(data.evento_nome||data.tipo_evento||''));
+    }
+    function renderClienteInfo(data) {
+      const fields = [{label:'Nome',value:data.cliente_nome||data.nome},{label:'Telefone',value:data.cliente_telefone||data.telefone},{label:'E-mail',value:data.cliente_email||data.email},{label:'WhatsApp',value:data.cliente_whatsapp||data.whatsapp}].filter(f=>f.value);
+      document.getElementById('cliente-info').innerHTML = fields.length ? fields.map(f=>'<div class="detail-field"><span class="detail-field__label">'+f.label+'</span><span class="detail-field__value">'+esc(f.value)+'</span></div>').join('') : '<div class="empty-state" style="padding:var(--space-6)"><p>Sem informações do cliente.</p></div>';
+    }
+    function renderEventoInfo(data) {
+      const fields = [{label:'Tipo',value:data.evento_nome||data.tipo_evento},{label:'Data do Evento',value:data.evento_data?new Date(data.evento_data).toLocaleDateString('pt-BR'):null},{label:'Local',value:data.evento_local||data.local},{label:'Observações',value:data.observacoes||data.obs}].filter(f=>f.value);
+      document.getElementById('evento-info').innerHTML = fields.length ? fields.map(f=>'<div class="detail-field"><span class="detail-field__label">'+f.label+'</span><span class="detail-field__value">'+esc(f.value)+'</span></div>').join('') : '<div class="empty-state" style="padding:var(--space-6)"><p>Sem informações do evento.</p></div>';
+    }
+    function renderFotos(fotos) {
+      const gallery = document.getElementById('fotos-gallery'), empty = document.getElementById('fotos-empty');
+      if (!fotos||!fotos.length) { gallery.innerHTML=''; empty.classList.remove('hidden'); return; }
+      empty.classList.add('hidden');
+      gallery.innerHTML = fotos.map((f,i)=>`<div class="photo-card${f.status==='selecionada'||f.status==='selected'?' photo-card--selected':f.status==='rejeitada'||f.status==='rejected'?' photo-card--rejected':''}"><img src="${esc(f.url||f.path||f.thumbnail_url||'')}" alt="Foto ${i+1}" loading="lazy" onclick="openPhotoViewer('${esc(f.url||f.path||f.thumbnail_url||'')}')">${(f.status==='selecionada'||f.status==='selected'||f.status==='rejeitada'||f.status==='rejected')?'<div class="photo-card__overlay"><span class="photo-card__status photo-card__status--'+(f.status==='selecionada'||f.status==='selected'?'selected':'rejected')+'">'+(f.status==='selecionada'||f.status==='selected'?'Selecionada':'Rejeitada')+'</span></div>':''}</div>`).join('');
+    }
+    function renderCuration(fotos) {
+      if (!fotos||!fotos.length) { document.getElementById('curation-gallery').innerHTML='<div class="empty-state" style="padding:var(--space-6)"><p>Nenhuma foto para curar.</p></div>'; return; }
+      window._curationFotos = fotos; filterCuration('all');
+    }
+    function filterCuration(filter) {
+      const gallery = document.getElementById('curation-gallery'), fotos = window._curationFotos||[];
+      document.querySelectorAll('[data-curation]').forEach(t=>t.classList.toggle('curation-tab--active',t.dataset.curation===filter));
+      const filtered = filter==='all'?fotos:filter==='selected'?fotos.filter(f=>f.status==='selecionada'||f.status==='selected'):fotos.filter(f=>f.status==='rejeitada'||f.status==='rejected');
+      if (!filtered.length) { gallery.innerHTML='<div class="empty-state" style="padding:var(--space-6)"><p>Nenhuma foto nesta categoria.</p></div>'; return; }
+      gallery.innerHTML = filtered.map((f,i)=>`<div class="photo-card${f.status==='selecionada'||f.status==='selected'?' photo-card--selected':f.status==='rejeitada'||f.status==='rejected'?' photo-card--rejected':''}"><img src="${esc(f.url||f.path||f.thumbnail_url||'')}" alt="Curadoria ${i+1}" loading="lazy" onclick="openPhotoViewer('${esc(f.url||f.path||f.thumbnail_url||'')}')">${(f.status==='selecionada'||f.status==='selected'||f.status==='rejeitada'||f.status==='rejected')?'<div class="photo-card__overlay"><span class="photo-card__status photo-card__status--'+(f.status==='selecionada'||f.status==='selected'?'selected':'rejected')+'">'+(f.status==='selecionada'||f.status==='selected'?'Selecionada':'Rejeitada')+'</span></div>':''}</div>`).join('');
+    }
+    function renderVideo(data) {
+      const url = data.video_url||data.video_path||'';
+      if (!url) { document.getElementById('video-player-wrapper').classList.add('hidden'); document.getElementById('video-empty').classList.remove('hidden'); return; }
+      document.getElementById('video-empty').classList.add('hidden');
+      document.getElementById('video-player-wrapper').classList.remove('hidden');
+      document.getElementById('video-player').src = url;
+    }
+    function openPhotoViewer(url) {
+      if (!url) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'photo-viewer-backdrop';
+      overlay.setAttribute('role','dialog');
+      overlay.setAttribute('aria-label','Visualizador de foto');
+      const img = document.createElement('img');
+      img.src = url; img.alt = 'Foto ampliada';
+      overlay.appendChild(img);
+      overlay.onclick = () => overlay.remove();
+      document.body.appendChild(overlay);
+    }
+    function connectStream(id) {
+      if (pedidoDetalheStream) pedidoDetalheStream.disconnect();
+      pedidoDetalheStream = connectPedidoStream(id, {
+        onMessage: (data) => {
+          const bar = document.getElementById('sse-status-bar');
+          if (bar) { bar.classList.remove('hidden'); if (data.status) bar.innerHTML = '🔄 Status atualizado: <strong>'+statusLabelMap(data.status)+'</strong>'; }
+          if (data.status && pedidoDetalheData && data.status !== pedidoDetalheData.status) {
+            pedidoDetalheData.status = data.status;
+            const badge = document.getElementById('detail-status');
+            if (badge) { badge.className = 'badge badge--'+statusBadgeClass(data.status); badge.textContent = statusLabelMap(data.status); }
+          }
+        },
+        onError: () => {}
+      });
+    }
+    async function reprocessarPedido() {
+      if (!pedidoDetalheId) return;
+      if (!confirm('Tem certeza que deseja reprocessar este pedido?')) return;
+      const btn = document.getElementById('btn-reprocessar');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner-btn"></span> Reprocessando…';
+      try { await api.post('/pedidos/'+pedidoDetalheId+'/reprocessar'); toast('Pedido reprocessado com sucesso!','success'); await loadPedidoDetalhe(pedidoDetalheId); }
+      catch (err) { toast(err.message||'Erro ao reprocessar.','error'); }
+      finally { btn.disabled = false; btn.innerHTML = '🔄 Reprocessar'; }
+    }
+    async function cancelarPedido() {
+      if (!pedidoDetalheId) return;
+      if (!confirm('Tem certeza que deseja cancelar este pedido? Esta ação não pode ser desfeita.')) return;
+      const btn = document.getElementById('btn-cancelar');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner-btn"></span> Cancelando…';
+      try { await api.post('/pedidos/'+pedidoDetalheId+'/cancelar'); toast('Pedido cancelado.','success'); await loadPedidoDetalhe(pedidoDetalheId); }
+      catch (err) { toast(err.message||'Erro ao cancelar.','error'); }
+      finally { btn.disabled = false; btn.innerHTML = '🚫 Cancelar'; }
+    }
+    function statusBadgeClass(s) { return ({'pendente':'warning','aprovado':'success','processando':'info','concluido':'success','concluído':'success','cancelado':'danger','rejeitado':'danger','erro':'danger'})[s?.toLowerCase()]||'neutral'; }
+    function statusLabelMap(s) { return ({'pendente':'Pendente','aprovado':'Aprovado','processando':'Processando','concluido':'Concluído','concluído':'Concluído','cancelado':'Cancelado','rejeitado':'Rejeitado','erro':'Erro'})[s?.toLowerCase()]||s||'—'; }
+    function esc(str) { if (!str) return '—'; const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+  </script>
+</body>
+</html>
