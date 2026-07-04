@@ -1,10 +1,10 @@
 version: "3.9"
-
 name: memoria-video
 
 networks:
   traefik-public:
     external: true
+    name: network_swarm_public
   memoria-internal:
     driver: overlay
 
@@ -59,9 +59,6 @@ services:
 
   backend:
     image: pelagus/memoria-video:latest
-    build:
-      context: https://github.com/prometheapelagus-cloud/memoria-video.git
-      dockerfile: backend/Dockerfile
     networks: [memoria-internal, traefik-public]
     depends_on: [mongodb, redis, postgres]
     environment:
