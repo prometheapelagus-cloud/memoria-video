@@ -1,14 +1,26 @@
+# Python
 .venv/
 venv/
 __pycache__/
 *.pyc
 *.pyo
 .env*
+.env.*
+
+# Version control
 .git/
 .gitignore
-.idea/
+
+# IDE
 .vscode/
-frontend/
+.idea/
+
+# Deploy scripts
 scripts/
+
+# Docker
+.dockerignore
+
+# OS artifacts
 .DS_Store
 Thumbs.db
