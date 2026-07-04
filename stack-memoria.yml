@@ -1,6 +1,5 @@
 version: "3.7"
 
-
 services:
   # ====================================================================
   #   MONGODB — Cache / armazenamento de fotos
@@ -30,10 +29,6 @@ services:
         reservations:
           memory: 512M
 
-
-  # ====================================================================
-  #   REDIS — Filas e cache
-  # ====================================================================
   redis:
     image: redis:7-alpine
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -54,10 +49,6 @@ services:
         reservations:
           memory: 64M
 
-
-  # ====================================================================
-  #   POSTGRES — Banco principal
-  # ====================================================================
   postgres:
     image: postgres:16-alpine
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -82,10 +73,6 @@ services:
         constraints:
           - node.role == manager
 
-
-  # ====================================================================
-  #   BACKEND — FastAPI (API principal)
-  # ====================================================================
   backend:
     image: pelagus/memoria-video:latest
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -95,7 +82,6 @@ services:
       DATABASE_URL: 'postgresql+asyncpg://memoria:SUA_SENHA_AQUI@postgres:5432/memoria_video'
       MONGODB_URL: 'mongodb://mongodb:27017/memoria_video'
       REDIS_URL: 'redis://redis:6379/0'
-
       # General
       DEBUG: "false"
     networks:
@@ -131,10 +117,6 @@ services:
         reservations:
           memory: 256M
 
-
-  # ====================================================================
-  #   FRONTEND — Nginx (SPA estático)
-  # ====================================================================
   frontend:
     image: nginx:alpine
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -161,11 +143,9 @@ services:
         - traefik.http.routers.memoria-front.tls.certresolver=letsencrypt
         - traefik.http.services.memoria-front.loadbalancer.server.port=80
 
-
 volumes:
   mongodb-data:
   postgresql-data:
-
 
 networks:
   traefik-public:
