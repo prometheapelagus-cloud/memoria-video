@@ -65,7 +65,7 @@ services:
     environment:
       POSTGRES_DB: memoria_video
       POSTGRES_USER: memoria
-      POSTGRES_PASSWORD: SUA_SENHA_AQUI
+      POSTGRES_PASSWORD: gbf1MYB0rfh_arb2grg
     networks:
       - memoria-internal
     volumes:
@@ -92,10 +92,9 @@ services:
     restart: always
     environment:
       # Database
-      DATABASE_URL: 'postgresql+asyncpg://memoria:SUA_SENHA_AQUI@postgres:5432/memoria_video'
+      DATABASE_URL: 'postgresql+asyncpg://memoria:gbf1MYB0rfh_arb2grg@postgres:5432/memoria_video'
       MONGODB_URL: 'mongodb://mongodb:27017/memoria_video'
       REDIS_URL: 'redis://redis:6379/0'
-
       # General
       DEBUG: "false"
     networks:
@@ -136,9 +135,12 @@ services:
   #   FRONTEND — Nginx (SPA estático)
   # ====================================================================
   frontend:
-    image: pelagus/memoria-frontend:latest
+    image: nginx:alpine
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
     restart: always
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - memoria-internal
       - traefik-public
