@@ -81,13 +81,11 @@ services:
     environment:
       POSTGRES_DB: memoria_video
       POSTGRES_USER: memoria
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+      POSTGRES_PASSWORD: SUA_SENHA_AQUI
     networks:
       - memoria-internal
     volumes:
       - postgresql-data:/var/lib/postgresql/data
-    secrets:
-      - pg_password
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U memoria -d memoria_video"]
       interval: 30s
@@ -110,9 +108,9 @@ services:
     restart: always
     environment:
       # Database
-      DATABASE_URL: postgresql+asyncpg://memoria:$${POSTGRES_PASSWORD}@postgres:5432/memoria_video
-      MONGODB_URL: mongodb://mongodb:27017/memoria_video
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: 'postgresql+asyncpg://memoria:SUA_SENHA_AQUI@postgres:5432/memoria_video'
+      MONGODB_URL: 'mongodb://mongodb:27017/memoria_video'
+      REDIS_URL: 'redis://redis:6379/0'
 
       # General
       DEBUG: "false"
@@ -123,8 +121,6 @@ services:
       - mongodb
       - redis
       - postgres
-    secrets:
-      - pg_password
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -182,12 +178,6 @@ services:
         - traefik.http.services.memoria-front.loadbalancer.server.port=80
 
 
-secrets:
-  pg_password:
-    external: true
-    name: memoria_pg_password
-
-
 volumes:
   mongodb-data:
   postgresql-data:
@@ -226,12 +216,6 @@ networks:
 | `mongodb-data` | Dados do MongoDB |
 | `postgresql-data` | Dados do PostgreSQL |
 
-## Secrets
-
-| Secret | Uso |
-|--------|-----|
-| `memoria_pg_password` | Senha do PostgreSQL (criada manualmente) |
-
 ## Build da imagem do backend
 
 A imagem é construída pelo **Portainer URL Builder**:
@@ -245,6 +229,5 @@ Tag:  pelagus/memoria-video:latest
 ## Deploy manual
 
 ```bash
-docker secret create memoria_pg_password -
 docker stack deploy -c stack-memoria.yml memoria-video
 ```
