@@ -5,12 +5,14 @@ const ROUTES = { '#/login': { page: 'login', auth: false }, '#/dashboard': { pag
 const DEFAULT_ROUTE = '#/dashboard';
 const LOGIN_ROUTE = '#/login';
 let $app;
+
 function init() {
   $app = document.getElementById('app');
   if (!$app) return;
   window.addEventListener('hashchange', handleRoute);
   handleRoute();
 }
+
 function handleRoute() {
   const hash = window.location.hash || DEFAULT_ROUTE;
   const route = resolveRoute(hash);
@@ -19,6 +21,7 @@ function handleRoute() {
   if (!route.auth && auth.isAuthenticated() && hash !== LOGIN_ROUTE && hash.split('?')[0].split('/').slice(0,2).join('/') === '#/login') { navigateTo(DEFAULT_ROUTE); return; }
   renderPage(route, hash);
 }
+
 function resolveRoute(hash) {
   const base = hash.split('?')[0].split('/').slice(0,2).join('/');
   if (ROUTES[base]) return ROUTES[base];
@@ -27,6 +30,32 @@ function resolveRoute(hash) {
   }
   return null;
 }
+
+// --- Page HTML templates ---
+function getLoginHTML() {
+  return `
+    <div class="login-card__logo">
+      <h1>🎬 Memórias em Vídeo</h1>
+      <p>Painel administrativo</p>
+    </div>
+    <div id="login-alert"></div>
+    <form id="login-form" autocomplete="on" novalidate>
+      <div class="form-group">
+        <label for="email">E-mail</label>
+        <input type="email" id="email" class="form-input" placeholder="seu@email.com" required autocomplete="email" inputmode="email">
+        <div class="form-error hidden" id="email-error">Informe um e-mail válido</div>
+      </div>
+      <div class="form-group">
+        <label for="password">Senha</label>
+        <input type="password" id="password" class="form-input" placeholder="Sua senha" required autocomplete="current-password" minlength="4">
+        <div class="form-error hidden" id="password-error">A senha é obrigatória</div>
+      </div>
+      <button type="submit" id="login-btn" class="btn btn-primary btn-block btn-lg">Entrar</button>
+    </form>
+    <p class="login-card__footer">Ambiente seguro · TLS 1.3</p>
+  `;
+}
+
 async function renderPage(route, hash) {
   const params = extractParams(hash);
   renderAppLayout(route.auth);
@@ -48,6 +77,7 @@ async function renderPage(route, hash) {
   } catch (err) { console.error(err); pageEl.innerHTML = '<div class="alert alert--error">'+escapeHtml(err.message)+'</div>'; }
   updateActiveNav(route.page);
 }
+
 function extractParams(hash) {
   const params = {};
   const qsIndex = hash.indexOf('?');
@@ -55,6 +85,7 @@ function extractParams(hash) {
   return params;
 }
 function escapeHtml(str) { if (!str) return ''; const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+
 function renderAppLayout(isAuthenticated) {
   if (!isAuthenticated) { $app.innerHTML = '<div class="login-page"><div class="login-card" id="page-content"></div></div>'; return; }
   $app.innerHTML = '<div class="app-layout"><div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div><aside class="sidebar" id="sidebar"><div class="sidebar__brand"><h1>Memórias</h1><span>em Vídeo</span></div><nav class="sidebar__nav"><a href="#/dashboard" class="sidebar__link" data-nav="dashboard"><span class="icon">📊</span> Dashboard</a><a href="#/pedidos" class="sidebar__link" data-nav="pedidos"><span class="icon">📋</span> Pedidos</a></nav><div class="sidebar__footer"><a href="#" onclick="auth.logout(); return false;" class="sidebar__link"><span class="icon">🚪</span> Sair</a></div></aside><main class="main-content"><header class="topbar"><button class="menu-toggle" onclick="toggleSidebar()" aria-label="Menu">☰</button><div class="topbar__title"><h2 id="page-title">Dashboard</h2><p id="page-subtitle">Visão geral</p></div><div class="topbar__actions"><div class="topbar__user"><span id="user-name">'+(escapeHtml((auth.getUser()&&auth.getUser().name)||''))+'</span></div></div></header><div class="page-content" id="page-content"></div></main></div>';
