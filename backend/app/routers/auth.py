@@ -58,12 +58,12 @@ def _verify_env_password(plain: str) -> bool:
 def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(hours=8))
     to_encode = {**data, "exp": expire, "iat": datetime.now(timezone.utc)}
-    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(to_encode, settings.secret_key, algorithm="HS256")
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
     try:
-        return jwt.decode(token, settings.secret_key, algorithms=[settings.jwt_algorithm])
+        return jwt.decode(token, settings.secret_key, algorithms=["HS256"])
     except JWTError as exc:
         raise HTTPException(status_code=401, detail="Token invalido ou expirado") from exc
 
