@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     mongodb_url: str = "mongodb://localhost:27017/memoria_video"
     secret_key: str = "change-me"
     debug: bool = True
+    admin_password: str = ""
 
     # Integration
     chatwoot_api_url: str = "http://localhost:3000"
