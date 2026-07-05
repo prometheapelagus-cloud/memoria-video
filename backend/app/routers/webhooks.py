@@ -14,7 +14,6 @@ from app.database.redis import get_redis
 from app.models.cliente import Cliente
 from app.models.evento import Evento
 from app.models.pedido import Pedido
-from app.schemas.webhook import ChatwootWebhookPayload
 from app.services.chatwoot import chatwoot_client
 from app.services import session as sess
 
@@ -22,513 +21,60 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
-_MENU_EVENTOS = (
-    "🎬 *Memórias em Vídeo* 🎬\n\n"
-    "Olá! Vamos criar seu vídeo personalizado.\n\n"
-    "*Escolha o tipo de evento:*\n\n"
-    "1️⃣ Aniversário\n"
-    "2️⃣ Casamento\n"
-    "3️⃣ Formatura\n"
-    "4️⃣ Natal\n"
-    "5️⃣ Reveillon\n"
-    "6️⃣ Páscoa\n"
-    "7️⃣ Dia das Mães\n"
-    "8️⃣ Dia dos Pais\n"
-    "9️⃣ Confraternização\n"
-    "🔟 Outro\n\n"
-    "*Digite o número da opção desejada:*"
-)
+_AVATAR_NOMES = ["avatar1.png", "avatar2.png", "avatar3.png", "avatar4.png", "avatar5.png"]
 
 
-async def _listar_eventos_ativos() -> list[Evento]:
-    """Retorna eventos disponíveis do banco."""
+async def _salvar_ou_atualizar_cliente(conversation_id: int, nome: str) -> Cliente:
     async with get_session() as db:
-        result = await db.execute(
-            select(Evento).where(Evento.ativo.is_(True)).order_by(Evento.nome)
-        )
-        return list(result.scalars().all())
-
-
-async def _salvar_ou_atualizar_cliente(
-    conversation_id: int,
-    nome: str,
-) -> Cliente | None:
-    """Cria um novo cliente ou atualiza se já existir pelo conversation_id."""
-    async with get_session() as db:
-        result = await db.execute(
-            select(Cliente).where(Cliente.chatwoot_conversation_id == conversation_id)
-        )
+        result = await db.execute(select(Cliente).where(Cliente.chatwoot_conversation_id == conversation_id))
         cliente = result.scalar_one_or_none()
         if cliente:
             cliente.nome = nome
         else:
-            cliente = Cliente(
-                chatwoot_conversation_id=conversation_id,
-                nome=nome,
-            )
+            cliente = Cliente(chatwoot_conversation_id=conversation_id, nome=nome)
             db.add(cliente)
         await db.commit()
         await db.refresh(cliente)
         return cliente
 
 
-async def _criar_pedido(
-    conversation_id: int,
-    cliente_id: uuid.UUID,
-    evento_slug: str,
-) -> Pedido | None:
-    """Cria um novo pedido no banco."""
+async def _criar_pedido(conversation_id: int, cliente_id, event_slug: str):
     async with get_session() as db:
         result = await db.execute(
-            select(Evento).where(Evento.slug == evento_slug, Evento.ativo.is_(True))
+            select(Evento).where(Evento.slug == event_slug, Evento.ativo.is_(True))
         )
         evento = result.scalar_one_or_none()
         if not evento:
             return None
-
-        pedido = Pedido(
-            cliente_id=cliente_id,
-            evento_id=evento.id,
-            status="awaiting_photos",
-        )
+        pedido = Pedido(cliente_id=cliente_id, evento_id=evento.id, status="awaiting_photos")
         db.add(pedido)
         await db.commit()
         await db.refresh(pedido)
         return pedido
 
 
-async def _atualizar_foto_count(pedido_id: uuid.UUID, total: int) -> None:
+async def _atualizar_foto_count(pedido_id, total: int):
     async with get_session() as db:
         result = await db.execute(select(Pedido).where(Pedido.id == pedido_id))
         pedido = result.scalar_one_or_none()
         if pedido:
-            pedido.qtde_fotos_enviadas = total
+            pedido.qtd_fotos_enviadas = total
             await db.commit()
 
 
-async def _enviar_menu_eventos(conversation_id: int) -> None:
-    """Envia o menu de eventos para a conversa."""
-    try:
-        await chatwoot_client.send_message(
-            conversation_id=conversation_id,
-            message=_MENU_EVENTOS,
-        )
-    except Exception as exc:
-        logger.error("Falha ao enviar menu de eventos: %s", exc)
-
-
-async def _enviar_prompt_nome(conversation_id: int) -> None:
-    """Pergunta o nome do cliente."""
-    try:
-        await chatwoot_client.send_message(
-            conversation_id=conversation_id,
-            message="📝 *Qual o seu nome?*",
-        )
-    except Exception as exc:
-        logger.error("Falha ao enviar prompt de nome: %s", exc)
-
-
-async def _enviar_prompt_fotos(conversation_id: int, slug_evento: str) -> None:
-    """Pede para o cliente enviar as fotos."""
-    try:
-        nomes_evento = {
-            "aniversario": "Aniversário 🎂",
-            "casamento": "Casamento 💍",
-            "formatura": "Formatura 🎓",
-            "natal": "Natal 🎄",
-            "reveillon": "Réveillon 🎆",
-            "pascoa": "Páscoa 🐣",
-            "dia-das-maes": "Dia das Mães 💐",
-            "dia-dos-pais": "Dia dos Pais 👔",
-            "confraternizacao": "Confraternização 🥳",
-            "outro": "Especial ✨",
-        }
-        nome_evento = nomes_evento.get(slug_evento, slug_evento)
-
-        await chatwoot_client.send_message(
-            conversation_id=conversation_id,
-            message=(
-                f"📸 *Evento:* {nome_evento}\n\n"
-                "*Agora, me envie as fotos!* 📷\n\n"
-                "Você pode enviar várias fotos de uma vez.\n"
-                "Envie quantas quiser e digite *PRONTO* quando terminar.\n\n"
-                "⚠️ *Limite:* Até 20 fotos por pedido."
-            ),
-        )
-    except Exception as exc:
-        logger.error("Falha ao enviar prompt de fotos: %s", exc)
-
-
-async def _confirmar_recebimento_fotos(
-    conversation_id: int,
-    total_fotos: int,
-    pedido_id: str,
-) -> None:
-    """Confirma o recebimento das fotos."""
-    try:
-        msg = (
-            f"✅ *{total_fotos} foto(s) recebida(s) com sucesso!*\n\n"
-            "Seu pedido será processado em breve.\n"
-            "Você receberá uma notificação quando o vídeo estiver pronto. 🎬"
-        )
-        if total_fotos >= 20:
-            msg += "\n\n⚠️ *Atenção:* Você atingiu o limite de 20 fotos."
-
-        await chatwoot_client.send_message(
-            conversation_id=conversation_id,
-            message=msg,
-        )
-
-        # Envia resumo
-        pedido_ref = pedido_id[:8]
-        await chatwoot_client.send_message(
-            conversation_id=conversation_id,
-            message=f"📋 *Resumo do Pedido*\nID: `#{pedido_ref}`\nFotos: {total_fotos}\nStatus: ⏳ Aguardando processamento",
-        )
-    except Exception as exc:
-        logger.error("Falha ao confirmar fotos: %s", exc)
-
-
-async def _finalizar_com_video(
-    conversation_id: int,
-    pedido_id: str,
-) -> None:
-    """Marca o pedido como completed e finaliza a conversa."""
+async def _get_eventos_menu() -> str:
     async with get_session() as db:
-        from sqlalchemy import select
-
-        result = await db.execute(
-            select(Pedido).where(Pedido.id == uuid.UUID(pedido_id))
-        )
-        pedido = result.scalar_one_or_none()
-        if pedido:
-            pedido.status = "completed"
-            pedido.completed_at = datetime.now(timezone.utc)
-            await db.commit()
-
-    try:
-        await chatwoot_client.send_message(
-            conversation_id=conversation_id,
-            message=(
-                "🎬 *Seu vídeo ficou pronto!*\n\n"
-                "Acesse o link abaixo para visualizar e baixar:\n"
-                f"🔗 https://admin.memoria.pelagus.com.br/#/pedido/{pedido_id}\n\n"
-                "Obrigado por usar o Memórias em Vídeo! 💙"
-            ),
-        )
-        await chatwoot_client.resolve_conversation(conversation_id)
-    except Exception as exc:
-        logger.error("Falha ao finalizar conversa: %s", exc)
-
-
-async def _revisar_pedido(
-    conversation_id: int,
-    pedido_id: str,
-) -> None:
-    """
-    Cliente pediu alterações — incrementa token_edicao, marca como revision
-    e dispara reprocessamento.
-    """
-    async with get_session() as db:
-        from sqlalchemy import select
-
-        result = await db.execute(
-            select(Pedido).where(Pedido.id == uuid.UUID(pedido_id))
-        )
-        pedido = result.scalar_one_or_none()
-        if pedido:
-            pedido.status = "revision"
-            pedido.token_edicao += 1
-            pedido.feedback_cliente = "cliente pediu revisão"
-            await db.commit()
-
-    # Dispara reprocessamento
-    try:
-        from app.agents.orquestrador import orquestrador
-        import asyncio
-
-        asyncio.ensure_future(orquestrador.processar_pedido(pedido_id))
-    except Exception as exc:
-        logger.error("Falha ao disparar revisão: %s", exc)
-
-    try:
-        await chatwoot_client.send_message(
-            conversation_id=conversation_id,
-            message="🔄 *Seu pedido será reprocessado com as alterações solicitadas!*\n\n"
-            "Você receberá uma notificação quando o novo vídeo estiver pronto.",
-        )
-    except Exception as exc:
-        logger.error("Falha ao notificar revisão: %s", exc)
-
-
-# ---------------------------------------------------------------------------
-# Middleware para garantir sessão ativa do Chatwoot
-# ---------------------------------------------------------------------------
-
-
-async def _garantir_sessao_chatwoot(inbox_id: int) -> bool:
-    """Garante que a sessão do Chatwoot está ativa."""
-    chave = f"chatwoot:inbox:{inbox_id}:token"
-    redis = await get_redis()
-    token = await redis.get(chave)
-    return bool(token)
-
-
-# ---------------------------------------------------------------------------
-# Rotas
-# ---------------------------------------------------------------------------
-
-_MENU_EVENTOS = (
-    "🎬 *Memórias em Vídeo* 🎬\n\n"
-    "Olá! Vamos criar seu vídeo personalizado.\n\n"
-    "*Escolha o tipo de evento:*\n\n"
-    "1️⃣ Aniversário\n"
-    "2️⃣ Casamento\n"
-    "3️⃣ Formatura\n"
-    "4️⃣ Natal\n"
-    "5️⃣ Réveillon\n"
-    "6️⃣ Páscoa\n"
-    "7️⃣ Dia das Mães\n"
-    "8️⃣ Dia dos Pais\n"
-    "9️⃣ Confraternização\n"
-    "🔟 Outro\n\n"
-    "*Digite o número da opção desejada:*"
-)
-
-
-@router.post("/chatwoot/message")
-async def chatwoot_message_webhook(request: Request):
-    """
-    Webhook do Chatwoot para mensagens recebidas.
-    Gerencia o fluxo: menu → nome → fotos → confirmação → processamento.
-    """
-    try:
-        payload = await request.json()
-    except Exception:
-        return {"status": "error", "detail": "invalid payload"}
-
-    event = payload.get("event")
-    if event != "message_created":
-        return {"status": "ignored", "reason": f"event {event}"}
-
-    conversation_id = (
-        payload.get("conversation", {}).get("id")
-        or payload.get("conversation_id")
-    )
-    message_type = payload.get("message", {}).get("message_type", "")
-    content = (payload.get("message", {}) or {}).get("content", "") or ""
-    attachments = (payload.get("message", {}) or {}).get("attachments", []) or []
-    sender = (payload.get("message", {}) or {}).get("sender", {}) or {}
-
-    # Só processa mensagens incoming
-    if message_type != "incoming":
-        return {"status": "ignored", "reason": "not incoming"}
-
-    if not conversation_id:
-        return {"status": "ignored", "reason": "no conversation_id"}
-
-    # Recupera sessão da conversa
-    redis = await get_redis()
-    chave_sessao = f"chatwoot:flow:{conversation_id}"
-    sessao_raw = await redis.get(chave_sessao)
-    sessao = sessao_raw if isinstance(sessao_raw, dict) else {}
-    if isinstance(sessao_raw, str):
-        import json
-
-        try:
-            sessao = json.loads(sessao_raw)
-        except (json.JSONDecodeError, TypeError):
-            sessao = {}
-
-    step = sessao.get("step", "menu")
-
-    # Upload das fotos para o GridFS
-    fotos_gridfs_ids = []
-    if attachments:
-        try:
-            mongodb = await get_db()
-            gridfs = get_gridfs(mongodb)
-            for att in attachments:
-                if "data_url" in att:
-                    import base64
-
-                    raw = att["data_url"]
-                    if "," in raw:
-                        raw = raw.split(",", 1)[1]
-                    buf = base64.b64decode(raw)
-                    file_id = await gridfs.upload_file(
-                        buf,
-                        filename=att.get("file_name", "foto.jpg"),
-                        content_type=att.get("content_type", "image/jpeg"),
-                    )
-                    fotos_gridfs_ids.append(str(file_id))
-        except Exception as exc:
-            logger.error("Falha ao fazer upload de fotos para GridFS: %s", exc)
-
-    # Processa baseado no step atual
-    if step == "menu":
-        # Cliente escolheu um evento
-        eventos_map = {
-            "1": "aniversario",
-            "2": "casamento",
-            "3": "formatura",
-            "4": "natal",
-            "5": "reveillon",
-            "6": "pascoa",
-            "7": "dia-das-maes",
-            "8": "dia-dos-pais",
-            "9": "confraternizacao",
-            "10": "outro",
-        }
-        choice = content.strip()
-        slug_evento = eventos_map.get(choice)
-        if slug_evento:
-            sessao["step"] = "nome"
-            sessao["evento_slug"] = slug_evento
-            await redis.set(chave_sessao, str(sessao))
-            await _enviar_prompt_nome(conversation_id)
-        else:
-            await chatwoot_client.send_message(
-                conversation_id=conversation_id,
-                message="❓ Opção inválida. Digite um número de 1 a 10.",
-            )
-
-    elif step == "nome":
-        # Cliente enviou o nome
-        nome = content.strip()
-        if nome and len(nome) > 1:
-            cliente = await _salvar_ou_atualizar_cliente(conversation_id, nome)
-            slug_evento = sessao.get("evento_slug", "outro")
-            pedido = await _criar_pedido(
-                conversation_id=conversation_id,
-                cliente_id=cliente.id,
-                evento_slug=slug_evento,
-            )
-            if pedido:
-                sessao["step"] = "fotos"
-                sessao["pedido_id"] = str(pedido.id)
-                await redis.set(chave_sessao, str(sessao))
-                await _enviar_prompt_fotos(conversation_id, slug_evento)
-            else:
-                await chatwoot_client.send_message(
-                    conversation_id=conversation_id,
-                    message="❌ Erro ao criar pedido. Tente novamente.",
-                )
-        else:
-            await chatwoot_client.send_message(
-                conversation_id=conversation_id,
-                message="📝 Por favor, digite seu nome.",
-            )
-
-    elif step == "fotos":
-        pedido_id = sessao.get("pedido_id")
-        if fotos_gridfs_ids:
-            try:
-                mongodb = await get_db()
-                collection = mongodb["fotos_metadados"]
-                for gridfs_id in fotos_gridfs_ids:
-                    await collection.insert_one({
-                        "pedido_id": pedido_id,
-                        "gridfs_id": gridfs_id,
-                        "tipo": "foto",
-                        "filename": None,
-                        "mime_type": "image/jpeg",
-                    })
-            except Exception as exc:
-                logger.error("Falha ao salvar metadados: %s", exc)
-
-        # Atualiza contagem
-        try:
-            mongodb = await get_db()
-            collection = mongodb["fotos_metadados"]
-            total = await collection.count_documents({"pedido_id": pedido_id})
-            await _atualizar_foto_count(uuid.UUID(pedido_id), total)
-        except Exception as exc:
-            logger.error("Falha ao contar fotos: %s", exc)
-            total = 0
-
-        if total > 0:
-            await _confirmar_recebimento_fotos(
-                conversation_id=conversation_id,
-                total_fotos=total,
-                pedido_id=pedido_id,
-            )
-            sessao["step"] = "confirmacao"
-            await redis.set(chave_sessao, str(sessao))
-
-            # Dispara processamento (assíncrono)
-            try:
-                from app.agents.orquestrador import orquestrador
-                import asyncio
-
-                asyncio.ensure_future(orquestrador.processar_pedido(pedido_id))
-            except Exception as exc:
-                logger.error("Falha ao disparar processamento: %s", exc)
-        else:
-            await chatwoot_client.send_message(
-                conversation_id=conversation_id,
-                message="📸 Não recebi nenhuma foto. Envie as fotos ou digite *CANCELAR* para cancelar.",
-            )
-
-    elif step == "confirmacao":
-        text = content.strip().upper()
-        if text in ("PRONTO", "SIM", "OK", "S"):
-            await _finalizar_com_video(
-                conversation_id=conversation_id,
-                pedido_id=sessao.get("pedido_id"),
-            )
-            await redis.delete(chave_sessao)
-        elif text in ("REVER", "REVISAR", "ALTERAR", "MUDAR"):
-            await _revisar_pedido(
-                conversation_id=conversation_id,
-                pedido_id=sessao.get("pedido_id"),
-            )
-        elif text in ("CANCELAR", "CANCEL", "NAO", "NÃO"):
-            await chatwoot_client.send_message(
-                conversation_id=conversation_id,
-                message="❌ Pedido cancelado. Se quiser começar de novo, é só enviar *OI*.",
-            )
-            await redis.delete(chave_sessao)
-        else:
-            await chatwoot_client.send_message(
-                conversation_id=conversation_id,
-                message="📸 Envie mais fotos ou digite *PRONTO* para finalizar.",
-            )
-
-    else:
-        # Step desconhecido — reinicia
-        await redis.delete(chave_sessao)
-        await _enviar_menu_eventos(conversation_id)
-
-    return {"status": "ok"}
-
-
-@router.post("/chatwoot/conversation")
-async def chatwoot_conversation_webhook(request: Request):
-    """Webhook de atualização de conversa do Chatwoot."""
-    try:
-        payload = await request.json()
-    except Exception:
-        return {"status": "error"}
-
-    event = payload.get("event")
-    conversation_id = (
-        payload.get("conversation", {}).get("id")
-        or payload.get("conversation_id")
-    )
-
-    if not conversation_id:
-        return {"status": "ignored"}
-
-    logger.info("Conversa %s atualizada: %s", conversation_id, event)
-
-    # Se for uma nova conversa, inicia o fluxo
-    if event in ("conversation_created", "conversation_opened"):
-        await _enviar_menu_eventos(conversation_id)
-        return {"status": "menu_enviado"}
-
-    return {"status": "ok"}
+        result = await db.execute(select(Evento).where(Evento.ativo.is_(True)).order_by(Evento.nome))
+        eventos = result.scalars().all()
+        if not eventos:
+            return "😞 *Nenhum evento disponível no momento.*"
+        lines = ["🎬 *Memórias em Vídeo* 🎬\n", "Olá! Vamos criar seu vídeo personalizado.\n"]
+        lines.append("*Escolha o tipo de evento:*\n")
+        for i, ev in enumerate(eventos, 1):
+            lines.append(f"{i}👉 {ev.nome}")
+        lines.append("\n*Digite o número da opção desejada:*")
+        return "\n".join(lines)
