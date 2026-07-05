@@ -30,10 +30,6 @@ services:
         reservations:
           memory: 512M
 
-
-  # ====================================================================
-  #   REDIS — Filas e cache
-  # ====================================================================
   redis:
     image: redis:7-alpine
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -54,10 +50,6 @@ services:
         reservations:
           memory: 64M
 
-
-  # ====================================================================
-  #   POSTGRES — Banco principal
-  # ====================================================================
   postgres:
     image: postgres:16-alpine
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -82,10 +74,6 @@ services:
         constraints:
           - node.role == manager
 
-
-  # ====================================================================
-  #   BACKEND — FastAPI (API principal)
-  # ====================================================================
   backend:
     image: pelagus/memoria-video:latest
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -128,10 +116,6 @@ services:
         reservations:
           memory: 256M
 
-
-  # ====================================================================
-  #   FRONTEND — Nginx (SPA estático)
-  # ====================================================================
   frontend:
     image: pelagus/memoria-frontend:latest
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -155,11 +139,9 @@ services:
         - traefik.http.routers.memoria-front.tls.certresolver=letsencrypt
         - traefik.http.services.memoria-front.loadbalancer.server.port=80
 
-
 volumes:
   mongodb-data:
   postgresql-data:
-
 
 networks:
   traefik-public:
