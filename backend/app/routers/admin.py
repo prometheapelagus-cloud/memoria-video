@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/etricas")
+@router.get("/metricas")
 async def dashboard_metricas():
     """
     Retorna métricas do dashboard:
