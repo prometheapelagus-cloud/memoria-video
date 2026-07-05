@@ -4,18 +4,17 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, case, or_
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
 from app.database.postgres import get_db
 from app.database.redis import get_redis
 from app.models.pedido import Pedido
 from app.models.cliente import Cliente
 from app.models.evento import Evento
-from app.services.gridfs_storage import list_by_pedido
-from app.services.bouncer import get_current_user
+from app.services.gridfs_storage import list_by_pedido, get_from_gridfs
+from app.routers.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ router = APIRouter()
 
 def _pedido_to_dict(pedido: Pedido) -> dict:
     """Converte modelo Pedido para dict serializável."""
-    return {
+    data = {
         "id": str(pedido.id),
         "cliente_id": str(pedido.cliente_id),
         "evento_id": str(pedido.evento_id) if pedido.evento_id else None,
@@ -47,6 +46,7 @@ def _pedido_to_dict(pedido: Pedido) -> dict:
         "evento_slug": pedido.evento.slug if pedido.evento else None,
         "fotos": [],
     }
+    return data
 
 
 @router.get("")
@@ -64,7 +64,6 @@ async def list_pedidos(
     """Lista pedidos com paginação e filtros."""
     query = select(Pedido).options(selectinload(Pedido.cliente), selectinload(Pedido.evento))
 
-    # Filtros
     if status:
         query = query.where(Pedido.status == status)
     if evento:
@@ -86,13 +85,11 @@ async def list_pedidos(
             Cliente.nome.ilike(f"%{busca}%")
         )
 
-    # Total
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
     total_pages = max(1, (total + limit - 1) // limit) if total > 0 else 1
 
-    # Paginação
     offset = (page - 1) * limit
     query = query.order_by(Pedido.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
@@ -133,7 +130,6 @@ async def get_pedido(
 
     data = _pedido_to_dict(pedido)
 
-    # Buscar fotos do GridFS
     try:
         fotos = await list_by_pedido(str(pedido.id))
         data["fotos"] = [
@@ -161,7 +157,6 @@ async def get_foto(
 ):
     """Serve uma foto do GridFS."""
     from fastapi.responses import Response
-    from app.services.gridfs_storage import get_from_gridfs
     try:
         data = await get_from_gridfs(file_id)
         return Response(content=data, media_type="image/jpeg")
@@ -178,7 +173,6 @@ async def get_video(
 ):
     """Serve o vídeo do pedido do GridFS."""
     from fastapi.responses import Response
-    from app.services.gridfs_storage import get_from_gridfs
     import uuid
     try:
         pid = uuid.UUID(pedido_id)
@@ -216,18 +210,15 @@ async def reprocessar_pedido(
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
-    # Só pode reprocessar se estiver em status final
     if pedido.status not in ("concluido", "erro", "cancelado"):
         raise HTTPException(status_code=400, detail=f"Pedido em status '{pedido.status}' não pode ser reprocessado")
 
-    # Resetar para processando
     pedido.status = "processando"
     pedido.token_edicao += 1
     pedido.video_gridfs_id = None
     pedido.completed_at = None
     await db.commit()
 
-    # Publicar na fila do Redis
     try:
         redis = await get_redis()
         await redis.rpush("fila:processamento", json.dumps({
