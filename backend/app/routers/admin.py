@@ -79,6 +79,12 @@ async def dashboard_metricas():
     }
 
 
+@router.get("/stats")
+async def dashboard_stats():
+    """Alias para /metricas — compatibilidade com frontend."""
+    return await dashboard_metricas()
+
+
 @router.get("/eventos")
 async def dashboard_eventos():
     """Retorna contagem de pedidos por evento (para gráfico de pizza)."""
