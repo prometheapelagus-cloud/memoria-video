@@ -19,6 +19,11 @@ async def get_db():
             await session.close()
 
 
+async def get_session() -> AsyncSession:
+    """Retorna uma sessão direta (sem yield) para uso fora do FastAPI Depends."""
+    return await async_session_factory()
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
