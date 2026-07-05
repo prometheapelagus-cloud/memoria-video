@@ -16,11 +16,7 @@ Rodando em Docker Swarm no servidor `pelagus-core`.
 ```yaml
 version: "3.7"
 
-
 services:
-  # ====================================================================
-  #   MONGODB — Cache / armazenamento de fotos
-  # ====================================================================
   mongodb:
     image: mongo:7
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -46,10 +42,6 @@ services:
         reservations:
           memory: 512M
 
-
-  # ====================================================================
-  #   REDIS — Filas e cache
-  # ====================================================================
   redis:
     image: redis:7-alpine
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -70,10 +62,6 @@ services:
         reservations:
           memory: 64M
 
-
-  # ====================================================================
-  #   POSTGRES — Banco principal
-  # ====================================================================
   postgres:
     image: postgres:16-alpine
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
@@ -81,7 +69,7 @@ services:
     environment:
       POSTGRES_DB: memoria_video
       POSTGRES_USER: memoria
-      POSTGRES_PASSWORD: SUA_SENHA_AQUI
+      POSTGRES_PASSWORD: gbf1MYB0rfh_arb2grg
     networks:
       - memoria-internal
     volumes:
@@ -98,21 +86,14 @@ services:
         constraints:
           - node.role == manager
 
-
-  # ====================================================================
-  #   BACKEND — FastAPI (API principal)
-  # ====================================================================
   backend:
     image: pelagus/memoria-video:latest
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
     restart: always
     environment:
-      # Database
-      DATABASE_URL: 'postgresql+asyncpg://memoria:SUA_SENHA_AQUI@postgres:5432/memoria_video'
+      DATABASE_URL: 'postgresql+asyncpg://memoria:gbf1MYB0rfh_arb2grg@postgres:5432/memoria_video'
       MONGODB_URL: 'mongodb://mongodb:27017/memoria_video'
       REDIS_URL: 'redis://redis:6379/0'
-
-      # General
       DEBUG: "false"
     networks:
       - memoria-internal
@@ -147,17 +128,10 @@ services:
         reservations:
           memory: 256M
 
-
-  # ====================================================================
-  #   FRONTEND — Nginx (SPA estático)
-  # ====================================================================
   frontend:
-    image: nginx:alpine
+    image: pelagus/memoria-frontend:latest
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
     restart: always
-    volumes:
-      - ./frontend:/usr/share/nginx/html:ro
-      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - memoria-internal
       - traefik-public
@@ -177,11 +151,9 @@ services:
         - traefik.http.routers.memoria-front.tls.certresolver=letsencrypt
         - traefik.http.services.memoria-front.loadbalancer.server.port=80
 
-
 volumes:
   mongodb-data:
   postgresql-data:
-
 
 networks:
   traefik-public:
@@ -200,7 +172,7 @@ networks:
 | `redis` | `redis:7-alpine` | 1 | Filas (ARQ) e cache |
 | `postgres` | `postgres:16-alpine` | 1 | Banco principal (asyncpg) |
 | `backend` | `pelagus/memoria-video:latest` | 2 | API FastAPI (porta 8000) |
-| `frontend` | `nginx:alpine` | 2 | SPA estático (porta 80) |
+| `frontend` | `pelagus/memoria-frontend:latest` | 2 | SPA estático (porta 80) |
 
 ## Redes
 
@@ -209,24 +181,23 @@ networks:
 | `memoria-internal` | `overlay` | Interna |
 | `traefik-public` | `overlay` | **Externa** — alias para `network_swarm_public` |
 
-## Volumes
+## Build das imagens
 
-| Volume | Uso |
-|--------|-----|
-| `mongodb-data` | Dados do MongoDB |
-| `postgresql-data` | Dados do PostgreSQL |
-
-## Build da imagem do backend
-
-A imagem é construída pelo **Portainer URL Builder**:
-
+### Backend
 ```
 URL:  https://github.com/prometheapelagus-cloud/memoria-video.git
 Path: backend/Dockerfile
 Tag:  pelagus/memoria-video:latest
 ```
 
-## Deploy manual
+### Frontend
+```
+URL:  https://github.com/prometheapelagus-cloud/memoria-video.git
+Path: frontend/Dockerfile
+Tag:  pelagus/memoria-frontend:latest
+```
+
+## Deploy
 
 ```bash
 docker stack deploy -c stack-memoria.yml memoria-video
