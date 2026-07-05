@@ -90,6 +90,86 @@ function renderAppLayout(isAuthenticated) {
   if (!isAuthenticated) { $app.innerHTML = '<div class="login-page"><div class="login-card" id="page-content"></div></div>'; return; }
   $app.innerHTML = '<div class="app-layout"><div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div><aside class="sidebar" id="sidebar"><div class="sidebar__brand"><h1>Memórias</h1><span>em Vídeo</span></div><nav class="sidebar__nav"><a href="#/dashboard" class="sidebar__link" data-nav="dashboard"><span class="icon">📊</span> Dashboard</a><a href="#/pedidos" class="sidebar__link" data-nav="pedidos"><span class="icon">📋</span> Pedidos</a></nav><div class="sidebar__footer"><a href="#" onclick="auth.logout(); return false;" class="sidebar__link"><span class="icon">🚪</span> Sair</a></div></aside><main class="main-content"><header class="topbar"><button class="menu-toggle" onclick="toggleSidebar()" aria-label="Menu">☰</button><div class="topbar__title"><h2 id="page-title">Dashboard</h2><p id="page-subtitle">Visão geral</p></div><div class="topbar__actions"><div class="topbar__user"><span id="user-name">'+(escapeHtml((auth.getUser()&&auth.getUser().name)||''))+'</span></div></div></header><div class="page-content" id="page-content"></div></main></div>';
 }
+function getRegisterHTML() {
+  return `
+    <div class="register-container">
+      <div class="register-card">
+        <div class="register-header">
+          <h1>Criar Administrador</h1>
+          <p>Primeiro acesso? Crie sua conta de administrador.</p>
+        </div>
+        <div id="register-alerts"></div>
+        <form id="register-form" onsubmit="return false;">
+          <div class="form-group">
+            <label for="reg-nome">Nome</label>
+            <input type="text" id="reg-nome" placeholder="Seu nome" required />
+          </div>
+          <div class="form-group">
+            <label for="reg-email">E-mail</label>
+            <input type="email" id="reg-email" placeholder="seu@email.com" required />
+          </div>
+          <div class="form-group">
+            <label for="reg-password">Senha</label>
+            <input type="password" id="reg-password" placeholder="Sua senha" required minlength="6" />
+          </div>
+          <div class="form-group">
+            <label for="reg-confirm">Confirmar senha</label>
+            <input type="password" id="reg-confirm" placeholder="Repita a senha" required />
+          </div>
+          <button type="submit" class="btn btn--primary btn--block">Criar conta</button>
+        </form>
+        <p class="register-footer">
+          Ja tem conta? <a href="#/login">Faca login</a>
+        </p>
+      </div>
+    </div>
+  `;
+}
+
+async function initRegisterForm() {
+  const form = document.getElementById('register-form');
+  if (!form) return;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nome = document.getElementById('reg-nome').value.trim();
+    const email = document.getElementById('reg-email').value.trim();
+    const password = document.getElementById('reg-password').value;
+    const confirmEl = document.getElementById('reg-confirm').value;
+    const alerts = document.getElementById('register-alerts');
+
+    if (!nome || !email || !password) {
+      alerts.innerHTML = '<div class="alert alert--error">Preencha todos os campos.</div>';
+      return;
+    }
+    if (password !== confirmEl) {
+      alerts.innerHTML = '<div class="alert alert--error">Senhas nao conferem.</div>';
+      return;
+    }
+    if (password.length < 6) {
+      alerts.innerHTML = '<div class="alert alert--error">Senha deve ter no minimo 6 caracteres.</div>';
+      return;
+    }
+
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    btn.textContent = 'Criando...';
+
+    try {
+      const result = await auth.register(email, password, nome);
+      alerts.innerHTML = '<div class="alert alert--success">' + result.message + '</div>';
+      if (result.has_admin) {
+        setTimeout(() => { window.location.hash = '#/login'; }, 2000);
+      }
+    } catch (err) {
+      alerts.innerHTML = '<div class="alert alert--error">' + (err.message || 'Erro ao criar admin') + '</div>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Criar conta';
+    }
+  });
+}
+
 function updateActiveNav(pageName) { document.querySelectorAll('[data-nav]').forEach(el=>el.classList.toggle('sidebar__link--active',el.dataset.nav===pageName)); }
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('sidebar--open'); document.getElementById('sidebar-overlay').classList.toggle('sidebar-overlay--visible'); }
 function closeSidebar() { document.getElementById('sidebar').classList.remove('sidebar--open'); document.getElementById('sidebar-overlay').classList.remove('sidebar-overlay--visible'); }
