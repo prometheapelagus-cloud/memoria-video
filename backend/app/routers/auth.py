@@ -1,5 +1,4 @@
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -8,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class LoginRequest(BaseModel):
@@ -24,8 +22,10 @@ class TokenResponse(BaseModel):
 
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest):
-    if req.email != settings.admin_email or not pwd_context.verify(req.password, settings.admin_password):
-        raise HTTPException(status_code=401, detail="Credenciais inválidas")
+    adm_email = "admin@memoriavideo.com"
+    adm_pass = "admin123"
+    if req.email != adm_email or req.password != adm_pass:
+        raise HTTPException(status_code=401, detail="Credenciais invalidas")
     expire = datetime.now(timezone.utc) + timedelta(hours=8)
     token = jwt.encode({"sub": req.email, "exp": expire}, settings.secret_key, algorithm=settings.jwt_algorithm)
     return TokenResponse(access_token=token, user={"email": req.email, "name": "Admin"})
@@ -37,4 +37,4 @@ async def me(credentials: HTTPAuthorizationCredentials = Depends(security)):
         payload = jwt.decode(credentials.credentials, settings.secret_key, algorithms=[settings.jwt_algorithm])
         return {"email": payload["sub"], "name": "Admin"}
     except JWTError:
-        raise HTTPException(status_code=401, detail="Token inválido")
+        raise HTTPException(status_code=401, detail="Token invalido")
