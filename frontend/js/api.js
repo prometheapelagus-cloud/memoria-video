@@ -150,6 +150,21 @@ const auth = {
     return data;
   },
 
+  async register(email, password, nome) {
+    const data = await api.post('/auth/register', {
+      email, password, nome: nome || 'Admin'
+    });
+    return data;
+  },
+
+  async status() {
+    try {
+      return await api.get('/auth/status');
+    } catch {
+      return { has_admin: false };
+    }
+  },
+
   logout() {
     clearToken();
     window.location.hash = '#/login';
