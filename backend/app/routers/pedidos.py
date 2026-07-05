@@ -1,268 +1,349 @@
-"""Pedidos CRUD completo com paginação, filtros e integração GridFS."""
+"""
+API de Pedidos — consulta, reprocessamento e cancelamento.
+
+Endpoints:
+  - GET  /{id}          — detalhes do pedido com URLs das fotos e vídeo
+  - POST /{id}/reprocessar — força reprocessamento do pedido
+  - POST /{id}/cancelar    — cancela pedido (não processa mais)
+"""
+
+import uuid
 import logging
-import json
 from datetime import datetime, timezone
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from fastapi import APIRouter, HTTPException
+from sqlalchemy import select
 
-from app.database.postgres import get_db
+from app.database.postgres import get_session
+from app.database.mongodb import get_db as get_mongo
 from app.database.redis import get_redis
 from app.models.pedido import Pedido
 from app.models.cliente import Cliente
 from app.models.evento import Evento
-from app.services.gridfs_storage import list_by_pedido, get_from_gridfs
-from app.routers.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+MONGO_COLLECTION = "fotos_metadados"
 
-def _pedido_to_dict(pedido: Pedido) -> dict:
-    """Converte modelo Pedido para dict serializável."""
-    data = {
-        "id": str(pedido.id),
-        "cliente_id": str(pedido.cliente_id),
-        "evento_id": str(pedido.evento_id) if pedido.evento_id else None,
-        "status": pedido.status,
-        "qtde_fotos_enviadas": pedido.qtde_fotos_enviadas,
-        "qtde_fotos_selecionadas": pedido.qtde_fotos_selecionadas,
-        "roteiro_ia": pedido.roteiro_ia,
-        "trilha_usada": pedido.trilha_usada,
-        "video_url": f"/api/v1/pedidos/{pedido.id}/video" if pedido.video_gridfs_id else None,
-        "video_duration_seconds": pedido.video_duration_seconds,
-        "feedback_cliente": pedido.feedback_cliente,
-        "observacoes": None,
-        "token_edicao": pedido.token_edicao,
-        "created_at": pedido.created_at.isoformat() if pedido.created_at else None,
-        "updated_at": pedido.updated_at.isoformat() if pedido.updated_at else None,
-        "completed_at": pedido.completed_at.isoformat() if pedido.completed_at else None,
-        "cliente_nome": pedido.cliente.nome if pedido.cliente else None,
-        "cliente_telefone": pedido.cliente.telefone if pedido.cliente else None,
-        "evento_nome": pedido.evento.nome if pedido.evento else None,
-        "evento_slug": pedido.evento.slug if pedido.evento else None,
-        "fotos": [],
-    }
-    return data
+
+# ---------------------------------------------------------------------------
+# GET / — listagem com filtros e paginação
+# ---------------------------------------------------------------------------
 
 
 @router.get("")
 async def list_pedidos(
-    page: int = Query(1, ge=1, description="Número da página"),
-    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
-    status: str | None = Query(None, description="Filtrar por status"),
-    evento: str | None = Query(None, description="Filtrar por evento slug"),
-    data_inicio: str | None = Query(None, description="Data início (YYYY-MM-DD)"),
-    data_fim: str | None = Query(None, description="Data fim (YYYY-MM-DD)"),
-    busca: str | None = Query(None, description="Busca por nome do cliente"),
-    db: AsyncSession = Depends(get_db),
-    _current_user: dict = Depends(get_current_user),
-):
-    """Lista pedidos com paginação e filtros."""
-    query = select(Pedido).options(selectinload(Pedido.cliente), selectinload(Pedido.evento))
+    status: str | None = None,
+    evento_id: str | None = None,
+    busca: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> dict:
+    """
+    Lista pedidos com filtros opcionais e paginação.
 
-    if status:
-        query = query.where(Pedido.status == status)
-    if evento:
-        query = query.join(Evento, Pedido.evento_id == Evento.id).where(Evento.slug == evento)
-    if data_inicio:
-        try:
-            dt_inicio = datetime.strptime(data_inicio, "%Y-%m-%d")
-            query = query.where(Pedido.created_at >= dt_inicio)
-        except ValueError:
-            pass
-    if data_fim:
-        try:
-            dt_fim = datetime.strptime(data_fim + "T23:59:59", "%Y-%m-%dT%H:%M:%S")
-            query = query.where(Pedido.created_at <= dt_fim)
-        except ValueError:
-            pass
-    if busca:
-        query = query.join(Cliente, Pedido.cliente_id == Cliente.id).where(
-            Cliente.nome.ilike(f"%{busca}%")
-        )
+    Filtros:
+      - status: filtra por status (ex: completed, analyzing, cancelled)
+      - evento_id: filtra por UUID do evento
+      - busca: busca textual em cliente.nome ou pedido.id (parcial)
+      - page: número da página (default 1)
+      - page_size: itens por página (default 20, max 100)
+    """
+    from sqlalchemy import or_
 
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total = total_result.scalar() or 0
-    total_pages = max(1, (total + limit - 1) // limit) if total > 0 else 1
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 20
+    if page_size > 100:
+        page_size = 100
 
-    offset = (page - 1) * limit
-    query = query.order_by(Pedido.created_at.desc()).offset(offset).limit(limit)
-    result = await db.execute(query)
-    pedidos = result.scalars().all()
+    async with get_session() as db:
+        # Query base
+        query = select(Pedido).order_by(Pedido.created_at.desc())
 
-    items = [_pedido_to_dict(p) for p in pedidos]
+        # Filtros
+        if status:
+            query = query.where(Pedido.status == status)
+        if evento_id:
+            try:
+                ev_uuid = uuid.UUID(evento_id)
+                query = query.where(Pedido.evento_id == ev_uuid)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="evento_id inválido")
+
+        if busca:
+            # Busca textual: tenta interpretar como UUID (busca exata por ID)
+            # ou busca por nome do cliente via join
+            try:
+                busca_uuid = uuid.UUID(busca)
+                query = query.where(
+                    or_(
+                        Pedido.id == busca_uuid,
+                        Pedido.cliente_id == busca_uuid,
+                    )
+                )
+            except ValueError:
+                # Não é UUID — busca por nome do cliente
+                query = query.join(Cliente).where(
+                    Cliente.nome.ilike(f"%{busca}%")
+                )
+
+        # Total (para paginação)
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        # Paginação
+        offset = (page - 1) * page_size
+        query = query.offset(offset).limit(page_size)
+
+        result = await db.execute(query)
+        pedidos = result.scalars().all()
 
     return {
-        "items": items,
-        "total": total,
-        "total_pages": total_pages,
         "page": page,
-        "limit": limit,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
+        "pedidos": [
+            {
+                "id": str(p.id),
+                "status": p.status,
+                "cliente_id": str(p.cliente_id) if p.cliente_id else None,
+                "evento_id": str(p.evento_id) if p.evento_id else None,
+                "qtde_fotos_enviadas": p.qtde_fotos_enviadas,
+                "qtde_fotos_selecionadas": p.qtde_fotos_selecionadas,
+                "token_edicao": p.token_edicao,
+                "feedback_cliente": p.feedback_cliente,
+                "video_gridfs_id": p.video_gridfs_id,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "completed_at": p.completed_at.isoformat() if p.completed_at else None,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+            }
+            for p in pedidos
+        ],
     }
+
+
+# ---------------------------------------------------------------------------
+# GET /{id} — detalhes completos do pedido
+# ---------------------------------------------------------------------------
 
 
 @router.get("/{pedido_id}")
-async def get_pedido(
-    pedido_id: str,
-    db: AsyncSession = Depends(get_db),
-    _current_user: dict = Depends(get_current_user),
-):
-    """Detalhe do pedido com fotos do GridFS."""
-    import uuid
+async def get_pedido(pedido_id: str) -> dict:
+    """
+    Retorna detalhes completos de um pedido, incluindo:
+
+    - Dados do pedido (status, datas, token_edicao)
+    - Cliente (nome, telefone)
+    - Evento (nome, slug)
+    - Fotos (metadados do GridFS)
+    - Vídeo (URL de download do GridFS)
+    """
     try:
-        pid = uuid.UUID(pedido_id)
+        pedido_uuid = uuid.UUID(pedido_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="ID de pedido inválido")
 
-    result = await db.execute(
-        select(Pedido)
-        .options(selectinload(Pedido.cliente), selectinload(Pedido.evento))
-        .where(Pedido.id == pid)
-    )
-    pedido = result.scalar_one_or_none()
-    if not pedido:
-        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    async with get_session() as db:
+        result = await db.execute(
+            select(Pedido).where(Pedido.id == pedido_uuid)
+        )
+        pedido = result.scalar_one_or_none()
+        if not pedido:
+            raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
-    data = _pedido_to_dict(pedido)
+        # Carrega cliente
+        cliente = None
+        if pedido.cliente_id:
+            cl_result = await db.execute(
+                select(Cliente).where(Cliente.id == pedido.cliente_id)
+            )
+            cliente = cl_result.scalar_one_or_none()
 
-    try:
-        fotos = await list_by_pedido(str(pedido.id))
-        data["fotos"] = [
+        # Carrega evento
+        evento = None
+        if pedido.evento_id:
+            ev_result = await db.execute(
+                select(Evento).where(Evento.id == pedido.evento_id)
+            )
+            evento = ev_result.scalar_one_or_none()
+
+    # Busca fotos do GridFS (metadados)
+    fotos = []
+    if pedido_id:
+        try:
+            mongo = await get_mongo()
+            collection = mongo[MONGO_COLLECTION]
+            cursor = collection.find(
+                {"pedido_id": pedido_id, "tipo": "foto"},
+                {"_id": 0},
+            ).sort("_id", 1)
+            fotos = await cursor.to_list(length=None)
+        except Exception as exc:
+            logger.warning("Falha ao buscar fotos do GridFS: %s", exc)
+
+    return {
+        "id": str(pedido.id),
+        "status": pedido.status,
+        "cliente": {
+            "id": str(cliente.id) if cliente else None,
+            "nome": cliente.nome if cliente else None,
+            "telefone": cliente.telefone if cliente else None,
+        } if cliente else None,
+        "evento": {
+            "id": str(evento.id) if evento else None,
+            "nome": evento.nome if evento else None,
+            "slug": evento.slug if evento else None,
+        } if evento else None,
+        "qtde_fotos_enviadas": pedido.qtde_fotos_enviadas,
+        "qtde_fotos_selecionadas": pedido.qtde_fotos_selecionadas,
+        "video_gridfs_id": pedido.video_gridfs_id,
+        "video_duration_seconds": pedido.video_duration_seconds,
+        "token_edicao": pedido.token_edicao,
+        "feedback_cliente": pedido.feedback_cliente,
+        "roteiro_ia": pedido.roteiro_ia,
+        "trilha_usada": pedido.trilha_usada,
+        "fotos": [
             {
-                "gridfs_id": str(f.get("gridfs_file_id", "")),
-                "url": f"/api/v1/pedidos/{pedido.id}/fotos/{f.get('gridfs_file_id', '')}" if f.get("gridfs_file_id") else "",
-                "filename": f.get("filename", ""),
-                "mime_type": f.get("mime_type", "image/jpeg"),
-                "file_size_bytes": f.get("file_size_bytes", 0),
-                "status": "recebida",
+                "gridfs_id": foto.get("gridfs_id"),
+                "filename": foto.get("filename"),
+                "mime_type": foto.get("mime_type"),
+                "tamanho": foto.get("tamanho"),
             }
-            for f in fotos
-        ]
-    except Exception as e:
-        logger.warning("Erro ao buscar fotos do GridFS: %s", e)
-
-    return data
-
-
-@router.get("/{pedido_id}/fotos/{file_id}")
-async def get_foto(
-    pedido_id: str,
-    file_id: str,
-    _current_user: dict = Depends(get_current_user),
-):
-    """Serve uma foto do GridFS."""
-    from fastapi.responses import Response
-    try:
-        data = await get_from_gridfs(file_id)
-        return Response(content=data, media_type="image/jpeg")
-    except Exception as e:
-        logger.error("Erro ao buscar foto %s: %s", file_id, e)
-        raise HTTPException(status_code=404, detail="Foto não encontrada")
+            for foto in fotos
+        ],
+        "created_at": pedido.created_at.isoformat() if pedido.created_at else None,
+        "completed_at": pedido.completed_at.isoformat() if pedido.completed_at else None,
+        "updated_at": pedido.updated_at.isoformat() if pedido.updated_at else None,
+    }
 
 
-@router.get("/{pedido_id}/video")
-async def get_video(
-    pedido_id: str,
-    db: AsyncSession = Depends(get_db),
-    _current_user: dict = Depends(get_current_user),
-):
-    """Serve o vídeo do pedido do GridFS."""
-    from fastapi.responses import Response
-    import uuid
-    try:
-        pid = uuid.UUID(pedido_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="ID de pedido inválido")
-
-    result = await db.execute(select(Pedido).where(Pedido.id == pid))
-    pedido = result.scalar_one_or_none()
-    if not pedido or not pedido.video_gridfs_id:
-        raise HTTPException(status_code=404, detail="Vídeo não encontrado")
-
-    try:
-        data = await get_from_gridfs(pedido.video_gridfs_id)
-        return Response(content=data, media_type="video/mp4")
-    except Exception as e:
-        logger.error("Erro ao buscar vídeo %s: %s", pedido_id, e)
-        raise HTTPException(status_code=404, detail="Vídeo não encontrado")
+# ---------------------------------------------------------------------------
+# POST /{id}/reprocessar — força reprocessamento
+# ---------------------------------------------------------------------------
 
 
 @router.post("/{pedido_id}/reprocessar")
-async def reprocessar_pedido(
-    pedido_id: str,
-    db: AsyncSession = Depends(get_db),
-    _current_user: dict = Depends(get_current_user),
-):
-    """Reprocessa um pedido: reseta status e enfileira novamente."""
-    import uuid
+async def reprocessar_pedido(pedido_id: str) -> dict:
+    """
+    Força o reprocessamento de um pedido.
+
+    - Reseta o status para 'analyzing'
+    - Dispara o orquestrador novamente
+    - Útil para recuperar de erros ou forçar nova geração
+    """
     try:
-        pid = uuid.UUID(pedido_id)
+        pedido_uuid = uuid.UUID(pedido_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="ID de pedido inválido")
 
-    result = await db.execute(select(Pedido).where(Pedido.id == pid))
-    pedido = result.scalar_one_or_none()
-    if not pedido:
-        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    async with get_session() as db:
+        result = await db.execute(
+            select(Pedido).where(Pedido.id == pedido_uuid)
+        )
+        pedido = result.scalar_one_or_none()
+        if not pedido:
+            raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
-    if pedido.status not in ("concluido", "erro", "cancelado"):
-        raise HTTPException(status_code=400, detail=f"Pedido em status '{pedido.status}' não pode ser reprocessado")
+        if pedido.status in ("completed", "cancelled"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Pedido já está {pedido.status}. Não é possível reprocessar.",
+            )
 
-    pedido.status = "processando"
-    pedido.token_edicao += 1
-    pedido.video_gridfs_id = None
-    pedido.completed_at = None
-    await db.commit()
+        # Reseta status
+        pedido.status = "analyzing"
+        pedido.token_edicao += 1
+        pedido.feedback_cliente = "reprocessamento manual"
+        await db.commit()
 
+    # Dispara orquestrador
     try:
-        redis = await get_redis()
-        await redis.rpush("fila:processamento", json.dumps({
+        from app.agents.orquestrador import orquestrador
+        import asyncio
+        asyncio.ensure_future(orquestrador.processar_pedido(pedido_id))
+        logger.info("Reprocessamento manual disparado para pedido %s", pedido_id)
+    except Exception as exc:
+        logger.exception("Falha ao disparar reprocessamento: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao iniciar reprocessamento: {str(exc)}",
+        )
+
+    # Publica status
+    try:
+        import json
+        r = await get_redis()
+        mensagem = json.dumps({
             "pedido_id": pedido_id,
-            "action": "reprocess",
-            "token_edicao": pedido.token_edicao,
-        }))
-        logger.info("Pedido %s enfileirado para reprocessamento", pedido_id)
-    except Exception as e:
-        logger.warning("Erro ao enfileirar reprocessamento: %s", e)
+            "evento": "reprocessamento_manual",
+            "status_geral": "analyzing",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        await r.publish("processamento:status", mensagem)
+    except Exception as exc:
+        logger.warning("Falha ao publicar reprocessamento: %s", exc)
 
     return {
-        "message": "Pedido enfileirado para reprocessamento",
+        "status": "reprocessando",
         "pedido_id": pedido_id,
-        "status": pedido.status,
+        "token_edicao": pedido.token_edicao,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /{id}/cancelar — cancela pedido
+# ---------------------------------------------------------------------------
 
 
 @router.post("/{pedido_id}/cancelar")
-async def cancelar_pedido(
-    pedido_id: str,
-    db: AsyncSession = Depends(get_db),
-    _current_user: dict = Depends(get_current_user),
-):
-    """Cancela um pedido."""
-    import uuid
+async def cancelar_pedido(pedido_id: str) -> dict:
+    """
+    Cancela um pedido.
+
+    - Marca status como 'cancelled'
+    - Não processa mais filas
+    """
     try:
-        pid = uuid.UUID(pedido_id)
+        pedido_uuid = uuid.UUID(pedido_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="ID de pedido inválido")
 
-    result = await db.execute(select(Pedido).where(Pedido.id == pid))
-    pedido = result.scalar_one_or_none()
-    if not pedido:
-        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    async with get_session() as db:
+        result = await db.execute(
+            select(Pedido).where(Pedido.id == pedido_uuid)
+        )
+        pedido = result.scalar_one_or_none()
+        if not pedido:
+            raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
-    if pedido.status in ("cancelado", "concluido"):
-        raise HTTPException(status_code=400, detail=f"Pedido já está '{pedido.status}'")
+        if pedido.status == "cancelled":
+            raise HTTPException(status_code=400, detail="Pedido já está cancelado")
 
-    pedido.status = "cancelado"
-    await db.commit()
+        pedido.status = "cancelled"
+        pedido.feedback_cliente = "cancelado pelo usuário"
+        await db.commit()
 
-    return {
-        "message": "Pedido cancelado com sucesso",
-        "pedido_id": pedido_id,
-        "status": pedido.status,
-    }
+    # Publica status
+    try:
+        import json
+        r = await get_redis()
+        mensagem = json.dumps({
+            "pedido_id": pedido_id,
+            "evento": "cancelado",
+            "status_geral": "cancelled",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        await r.publish("processamento:status", mensagem)
+    except Exception as exc:
+        logger.warning("Falha ao publicar cancelamento: %s", exc)
+
+    logger.info("Pedido %s cancelado", pedido_id)
+
+    return {"status": "cancelled", "pedido_id": pedido_id}
