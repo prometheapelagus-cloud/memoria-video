@@ -1,4 +1,4 @@
-version: "3.7"
+name: memoria-video
 
 services:
   # ====================================================================
@@ -81,16 +81,11 @@ services:
 
   # ====================================================================
   #   BACKEND — FastAPI (API principal)
-  #     Depende de: mongodb, redis, postgres
   # ====================================================================
   backend:
     image: pelagus/memoria-video:latest
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
     restart: always
-    depends_on:
-      - mongodb
-      - redis
-      - postgres
     environment:
       DATABASE_URL: 'postgresql+asyncpg://memoria:gbf1MYB0rfh_arb2grg@postgres:5432/memoria_video'
       MONGODB_URL: 'mongodb://mongodb:27017/memoria_video'
@@ -99,6 +94,10 @@ services:
     networks:
       - memoria-internal
       - traefik-public
+    depends_on:
+      - mongodb
+      - redis
+      - postgres
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -127,14 +126,11 @@ services:
 
   # ====================================================================
   #   FRONTEND — Nginx (SPA estático)
-  #     Depende de: backend (API estar no ar)
   # ====================================================================
   frontend:
     image: pelagus/memoria-frontend:latest
     hostname: "{{.Service.Name}}.{{.Task.Slot}}"
     restart: always
-    depends_on:
-      - backend
     networks:
       - memoria-internal
       - traefik-public
@@ -153,7 +149,6 @@ services:
         - traefik.http.routers.memoria-front.tls=true
         - traefik.http.routers.memoria-front.tls.certresolver=letsencrypt
         - traefik.http.services.memoria-front.loadbalancer.server.port=80
-
 
 volumes:
   mongodb-data:
