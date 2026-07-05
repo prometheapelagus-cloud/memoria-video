@@ -1,7 +1,7 @@
 /* ============================================================
    App Router — Client-side SPA navigation
    ============================================================ */
-const ROUTES = { '#/login': { page: 'login', auth: false }, '#/dashboard': { page: 'dashboard', auth: true }, '#/pedidos': { page: 'pedidos', auth: true }, '#/pedido': { page: 'pedido-detalhe', auth: true } };
+const ROUTES = { '#/login': { page: 'login', auth: false }, '#/register': { page: 'register', auth: false }, '#/dashboard': { page: 'dashboard', auth: true }, '#/pedidos': { page: 'pedidos', auth: true }, '#/pedido': { page: 'pedido-detalhe', auth: true } };
 const DEFAULT_ROUTE = '#/dashboard';
 const LOGIN_ROUTE = '#/login';
 let $app;
@@ -91,6 +91,18 @@ function renderAppLayout(isAuthenticated) {
   if (!isAuthenticated) { $app.innerHTML = '<div class="login-page"><div class="login-card" id="page-content"></div></div>'; return; }
   $app.innerHTML = '<div class="app-layout"><div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div><aside class="sidebar" id="sidebar"><div class="sidebar__brand"><h1>Memórias</h1><span>em Vídeo</span></div><nav class="sidebar__nav"><a href="#/dashboard" class="sidebar__link" data-nav="dashboard"><span class="icon">📊</span> Dashboard</a><a href="#/pedidos" class="sidebar__link" data-nav="pedidos"><span class="icon">📋</span> Pedidos</a></nav><div class="sidebar__footer"><a href="#" onclick="auth.logout(); return false;" class="sidebar__link"><span class="icon">🚪</span> Sair</a></div></aside><main class="main-content"><header class="topbar"><button class="menu-toggle" onclick="toggleSidebar()" aria-label="Menu">☰</button><div class="topbar__title"><h2 id="page-title">Dashboard</h2><p id="page-subtitle">Visão geral</p></div><div class="topbar__actions"><div class="topbar__user"><span id="user-name">'+(escapeHtml((auth.getUser()&&auth.getUser().name)||''))+'</span></div></div></header><div class="page-content" id="page-content"></div></main></div>';
 }
+
+async function checkAdminStatus() {
+  const alerts = document.getElementById('login-alerts');
+  if (!alerts) return;
+  try {
+    const status = await auth.status();
+    if (!status.has_admin) {
+      alerts.innerHTML = '<div class="alert alert--info">Nenhum admin cadastrado. <a href="#/register">Crie sua conta</a>.</div>';
+    }
+  } catch (e) {}
+}
+
 function getRegisterHTML() {
   return `
     <div class="register-container">
