@@ -27,10 +27,14 @@ app.add_middleware(
 )
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next):
     path = request.url.path
-    # Rotas públicas
     if path in ("/health", "/", "/docs", "/openapi.json"):
         return await call_next(request)
     if path.startswith(("/webhooks", "/api/v1/auth", "/api/v1/status")):
