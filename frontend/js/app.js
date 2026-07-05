@@ -65,6 +65,7 @@ async function renderPage(route, hash) {
   try {
     switch (route.page) {
       case 'login': pageEl.innerHTML = getLoginHTML(); initLoginForm(); break;
+      case 'register': pageEl.innerHTML = getRegisterHTML(); initRegisterForm(); break;
       case 'dashboard': pageEl.innerHTML = getDashboardHTML(); await loadDashboard(); break;
       case 'pedidos': pageEl.innerHTML = getPedidosHTML(); await loadPedidos(params); break;
       case 'pedido-detalhe':
