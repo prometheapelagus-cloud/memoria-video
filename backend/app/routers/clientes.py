@@ -4,11 +4,10 @@ import logging
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.database.postgres import get_db
 from app.models.cliente import Cliente
-from app.services.bouncer import get_current_user
+from app.routers.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +30,10 @@ async def list_clientes(
             Cliente.nome.ilike(f"%{busca}%") | Cliente.telefone.ilike(f"%{busca}%")
         )
 
-    # Total
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
 
-    # Paginação
     offset = (page - 1) * limit
     query = query.order_by(Cliente.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
