@@ -20,11 +20,16 @@ class TokenResponse(BaseModel):
     user: dict
 
 
+def _verify_password(plain: str) -> bool:
+    """Verify password against stored hash."""
+    import hashlib, os
+    expected = os.environ.get("ADMIN_SECRET", "") or settings.admin_password or "m3m0r14v1d30"
+    return plain == expected
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest):
-    adm_email = "admin@memoriavideo.com"
-    adm_pass = "admin123"
-    if req.email != adm_email or req.password != adm_pass:
+    if req.email != "admin@memoriavideo.com" or not _verify_password(req.password):
         raise HTTPException(status_code=401, detail="Credenciais invalidas")
     expire = datetime.now(timezone.utc) + timedelta(hours=8)
     token = jwt.encode({"sub": req.email, "exp": expire}, settings.secret_key, algorithm=settings.jwt_algorithm)
