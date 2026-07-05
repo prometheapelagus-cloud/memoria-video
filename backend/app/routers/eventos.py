@@ -1,4 +1,4 @@
-"""Listagem de eventos cadastrados.""""
+"""Listagem de eventos cadastrados."""
 import logging
 
 from fastapi import APIRouter, Depends, Query
