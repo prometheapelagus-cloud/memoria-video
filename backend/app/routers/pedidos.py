@@ -13,9 +13,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.postgres import get_session
+from app.database.postgres import get_db, get_session
 from app.database.mongodb import get_db as get_mongo
 from app.database.redis import get_redis
 from app.models.pedido import Pedido
