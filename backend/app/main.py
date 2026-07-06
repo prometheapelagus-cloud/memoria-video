@@ -52,7 +52,6 @@ async def jwt_auth_middleware(request: Request, call_next):
 
 
 from app.routers import webhooks, pedidos, clientes, eventos, admin, status, auth
-from app.routers.admin import dashboard_metricas
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
@@ -61,9 +60,3 @@ app.include_router(clientes.router, prefix="/api/v1/clientes", tags=["clientes"]
 app.include_router(eventos.router, prefix="/api/v1/eventos", tags=["eventos"])
 app.include_router(admin.router, prefix="/api/v1/dashboard", tags=["dashboard"])
 app.include_router(status.router, prefix="/api/v1/status", tags=["status"])
-
-
-# Alias para compatibilidade com frontend (chama /api/v1/stats)
-@app.get("/api/v1/stats")
-async def stats_alias():
-    return await dashboard_metricas()
