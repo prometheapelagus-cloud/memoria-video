@@ -37,7 +37,7 @@ async def jwt_auth_middleware(request: Request, call_next):
     path = request.url.path
     if path in ("/health", "/", "/docs", "/openapi.json"):
         return await call_next(request)
-    if path.startswith(("/webhooks", "/api/v1/auth", "/api/v1/status")):
+    if path.startswith(("/webhooks", "/api/v1/auth", "/api/v1/status", "/api/v1/setup")):
         return await call_next(request)
     if path.startswith("/api/v1/"):
         auth = request.headers.get("Authorization")
@@ -51,7 +51,7 @@ async def jwt_auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-from app.routers import webhooks, pedidos, clientes, eventos, admin, status, auth
+from app.routers import webhooks, pedidos, clientes, eventos, admin, status, auth, setup
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
@@ -60,3 +60,4 @@ app.include_router(clientes.router, prefix="/api/v1/clientes", tags=["clientes"]
 app.include_router(eventos.router, prefix="/api/v1/eventos", tags=["eventos"])
 app.include_router(admin.router, prefix="/api/v1/dashboard", tags=["dashboard"])
 app.include_router(status.router, prefix="/api/v1/status", tags=["status"])
+app.include_router(setup.router, prefix="/api/v1/setup", tags=["setup"])
