@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <div id="app">
@@ -17,103 +18,26 @@
           <h1>🎬 Memórias em Vídeo</h1>
           <p>Painel administrativo</p>
         </div>
-
         <div id="login-alert"></div>
-
         <form id="login-form" autocomplete="on" novalidate>
           <div class="form-group">
             <label for="email">E-mail</label>
-            <input
-              type="email"
-              id="email"
-              class="form-input"
-              placeholder="seu@email.com"
-              required
-              autocomplete="email"
-              inputmode="email"
-            >
+            <input type="email" id="email" class="form-input" placeholder="seu@email.com" required autocomplete="email" inputmode="email">
             <div class="form-error hidden" id="email-error">Informe um e-mail válido</div>
           </div>
-
           <div class="form-group">
             <label for="password">Senha</label>
-            <input
-              type="password"
-              id="password"
-              class="form-input"
-              placeholder="Sua senha"
-              required
-              autocomplete="current-password"
-              minlength="4"
-            >
+            <input type="password" id="password" class="form-input" placeholder="Sua senha" required autocomplete="current-password" minlength="4">
             <div class="form-error hidden" id="password-error">A senha é obrigatória</div>
           </div>
-
-          <button type="submit" id="login-btn" class="btn btn-primary btn-block btn-lg">
-            Entrar
-          </button>
+          <button type="submit" id="login-btn" class="btn btn-primary btn-block btn-lg">Entrar</button>
         </form>
-
         <p class="login-card__footer">Ambiente seguro · TLS 1.3</p>
       </div>
     </div>
   </div>
-
   <script src="js/api.js"></script>
   <script src="js/sse.js"></script>
   <script src="js/app.js"></script>
-  <script>
-    function initLoginForm() {
-      const form = document.getElementById('login-form');
-      const btn = document.getElementById('login-btn');
-      const alertEl = document.getElementById('login-alert');
-
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        alertEl.innerHTML = '';
-
-        const email = document.getElementById('email').value.trim();
-        const password = document.getElementById('password').value;
-        const emailError = document.getElementById('email-error');
-        const passwordError = document.getElementById('password-error');
-
-        // Hide previous field errors
-        emailError.classList.add('hidden');
-        passwordError.classList.add('hidden');
-
-        // Client-side validation
-        let valid = true;
-        if (!email || !email.includes('@')) {
-          emailError.classList.remove('hidden');
-          valid = false;
-        }
-        if (!password || password.length < 4) {
-          passwordError.classList.remove('hidden');
-          valid = false;
-        }
-        if (!valid) return;
-
-        // Loading state
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-btn"></span> Entrando…';
-
-        try {
-          await auth.login(email, password);
-          window.location.hash = '#/dashboard';
-        } catch (err) {
-          showAlert(err.message || 'Credenciais inválidas. Verifique seu e-mail e senha.');
-          btn.disabled = false;
-          btn.innerHTML = 'Entrar';
-        }
-      });
-
-      function showAlert(msg) {
-        alertEl.innerHTML = `<div class="alert alert--error">${escapeHtml(msg)}</div>`;
-      }
-    }
-
-    // Override app.js init for login — we render inline
-    // The app.js router will re-init this when hash = #/login
-  </script>
 </body>
 </html>

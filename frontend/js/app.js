@@ -94,7 +94,7 @@ function esc(str) { if (!str) return '—'; var d = document.createElement('div'
 async function loadDashboard() {
   setPageMeta('Dashboard', 'Visão geral dos pedidos');
   try {
-    var m = await api.get('/dashboard/metrics').catch(function() { return null; });
+    var m = await api.get('/dashboard/metricas').catch(function() { return null; });
     var p = await api.get('/pedidos', { params: { limit: 5 } }).catch(function() { return null; });
     if (m) {
       document.getElementById('metric-hoje').innerHTML = m.hoje || '0';
