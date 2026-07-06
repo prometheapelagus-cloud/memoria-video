@@ -8,10 +8,11 @@ Endpoints:
 import logging
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sqlalchemy import select, func, and_
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.postgres import get_session
+from app.database.postgres import get_db
 from app.models.pedido import Pedido
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ router = APIRouter()
 
 
 @router.get("/metricas")
-async def dashboard_metricas():
+async def dashboard_metricas(db: AsyncSession = Depends(get_db)):
     """
     Retorna métricas do dashboard:
     - total_pedidos: total de pedidos
@@ -33,39 +34,38 @@ async def dashboard_metricas():
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     month_start = today_start.replace(day=1)
 
-    async with get_session() as db:
-        # Total de pedidos
-        result = await db.execute(select(func.count(Pedido.id)))
-        total_pedidos = result.scalar() or 0
+    # Total de pedidos
+    result = await db.execute(select(func.count(Pedido.id)))
+    total_pedidos = result.scalar() or 0
 
-        # Pedidos hoje
-        result = await db.execute(
-            select(func.count(Pedido.id)).where(Pedido.created_at >= today_start)
-        )
-        pedidos_hoje = result.scalar() or 0
+    # Pedidos hoje
+    result = await db.execute(
+        select(func.count(Pedido.id)).where(Pedido.created_at >= today_start)
+    )
+    pedidos_hoje = result.scalar() or 0
 
-        # Pedidos no mês
-        result = await db.execute(
-            select(func.count(Pedido.id)).where(Pedido.created_at >= month_start)
-        )
-        pedidos_mes = result.scalar() or 0
+    # Pedidos no mês
+    result = await db.execute(
+        select(func.count(Pedido.id)).where(Pedido.created_at >= month_start)
+    )
+    pedidos_mes = result.scalar() or 0
 
-        # Concluídos
-        result = await db.execute(
-            select(func.count(Pedido.id)).where(Pedido.status == "completed")
-        )
-        concluidos = result.scalar() or 0
+    # Concluídos
+    result = await db.execute(
+        select(func.count(Pedido.id)).where(Pedido.status == "completed")
+    )
+    concluidos = result.scalar() or 0
 
-        # Tempo médio de processamento (em segundos)
-        result = await db.execute(
-            select(func.avg(
-                (func.extract("epoch", Pedido.completed_at) - func.extract("epoch", Pedido.created_at))
-            )).where(and_(
-                Pedido.completed_at.isnot(None),
-                Pedido.created_at.isnot(None),
-            ))
-        )
-        tempo_medio_seg = result.scalar() or 0
+    # Tempo médio de processamento (em segundos)
+    result = await db.execute(
+        select(func.avg(
+            (func.extract("epoch", Pedido.completed_at) - func.extract("epoch", Pedido.created_at))
+        )).where(and_(
+            Pedido.completed_at.isnot(None),
+            Pedido.created_at.isnot(None),
+        ))
+    )
+    tempo_medio_seg = result.scalar() or 0
 
     taxa_conclusao = (concluidos / total_pedidos * 100) if total_pedidos > 0 else 0.0
 
@@ -80,23 +80,22 @@ async def dashboard_metricas():
 
 
 @router.get("/stats")
-async def dashboard_stats():
+async def dashboard_stats(db: AsyncSession = Depends(get_db)):
     """Alias para /metricas — compatibilidade com frontend."""
-    return await dashboard_metricas()
+    return await dashboard_metricas(db)
 
 
 @router.get("/eventos")
-async def dashboard_eventos():
+async def dashboard_eventos(db: AsyncSession = Depends(get_db)):
     """Retorna contagem de pedidos por evento (para gráfico de pizza)."""
     from app.models.evento import Evento
 
-    async with get_session() as db:
-        result = await db.execute(
-            select(Evento.slug, Evento.nome, func.count(Pedido.id)).outerjoin(
-                Pedido, Pedido.evento_id == Evento.id
-            ).group_by(Evento.id, Evento.slug, Evento.nome)
-        )
-        rows = result.all()
+    result = await db.execute(
+        select(Evento.slug, Evento.nome, func.count(Pedido.id)).outerjoin(
+            Pedido, Pedido.evento_id == Evento.id
+        ).group_by(Evento.id, Evento.slug, Evento.nome)
+    )
+    rows = result.all()
 
     return [
         {"slug": slug, "nome": nome, "total": total}
